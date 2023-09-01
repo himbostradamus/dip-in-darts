@@ -27,11 +27,19 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 
 from typing import Any
 
-def get_unet():
-    return torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet', in_channels=1, out_channels=1, init_features=64, pretrained=False)
 
 torch.backends.cudnn.enabled = True
 torch.backends.cudnn.benchmark =True
+
+
+import torch_xla.core.xla_model as xm
+
+TPU_IP_ADDRESS = '10.119.164.98'
+os.environ['TPU_IP_ADDRESS'] = TPU_IP_ADDRESS
+os.environ['XRT_TPU_CONFIG'] = f"tpu_worker;0;{TPU_IP_ADDRESS}:8470"
+
+def get_unet():
+    return torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet', in_channels=1, out_channels=1, init_features=64, pretrained=False)
 
 # SGLD Pytorch Lightning Module
 class SingleImageDataset(Dataset):
@@ -361,7 +369,12 @@ module = SGLD_HPO(
 trainer = Trainer(
             max_epochs=num_iter,
             fast_dev_run=False,
-            gpus=1,
+            
+            # gpus=1,
+            
+            accelerator="tpu",
+            devices=[1],
+            
             checkpoint_callback=False
             )
 

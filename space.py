@@ -168,3 +168,9 @@ class DARTS_UNet(nn.Module):
         assert y.shape == (1, 1, 128, 128), "Output shape should be (1, 1, 128, 128), got {}".format(y.shape)
         print(f'output shape: {y.shape}\n')
         print("Test passed.\n\n")
+
+
+
+def get_U_Net(in_channels=1, out_channels=1, init_features=64, pretrained=False):
+    return torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet',
+                       in_channels=in_channels, out_channels=out_channels, init_features=init_features, pretrained=pretrained)
