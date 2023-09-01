@@ -1,133 +1,273 @@
-from __future__ import print_function
-import warnings
-warnings.filterwarnings("ignore")
-import matplotlib
-import matplotlib.pyplot as plt
-import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '2'
-import sys
 import numpy as np
-from models import *
 import torch
-import torch.optim
-import time
-from skimage.measure import compare_psnr
-from utils.denoising_utils import *
-import _pickle as cPickle
+from skimage.metrics import peak_signal_noise_ratio as compare_psnr
+
+from torch.utils.data import Dataset
+from torch import optim, tensor, zeros_like
+
+import pytorch_lightning as pl
+
+from nni import trace, report_intermediate_result, report_final_result
+import nni.retiarii.nn.pytorch as nn
+from nni.retiarii.evaluator.pytorch import LightningModule
+from nni.retiarii.evaluator.pytorch.lightning import DataLoader
+from lightning.pytorch.callbacks.early_stopping import EarlyStopping
+
+from typing import Any
+
+from darts.common_utils import *
+from darts.noises import add_selected_noise
+from darts.phantom import generate_phantom
+
 torch.backends.cudnn.enabled = True
 torch.backends.cudnn.benchmark =True
 dtype = torch.cuda.FloatTensor
-import seaborn as sns
-sns.set_style("darkgrid", {"axes.facecolor": ".9"})
 
-# display images
-def np_plot(np_matrix, title):
-    plt.clf()
-    fig = plt.imshow(np_matrix.transpose(1, 2, 0), interpolation = 'nearest')
-    fig.axes.get_xaxis().set_visible(False)
-    fig.axes.get_yaxis().set_visible(False)
-    plt.title(title)
-    plt.axis('off')
-    plt.pause(0.05) 
+@trace
+class SingleImageDataset(Dataset):
+    def __init__(self, image, num_iter):
+        self.image = image
+        self.num_iter = num_iter
 
-INPUT = 'noise'
-pad = 'reflection'
-OPT_OVER = 'net' # optimize over the net parameters only
-reg_noise_std = 1./30.
-learning_rate = LR = 0.01
-exp_weight=0.99
-input_depth = 32 
-roll_back = True # to prevent numerical issues
-num_iter = 20000 # max iterations
-burnin_iter = 7000 # burn-in iteration for SGLD
-weight_decay = 5e-8
-show_every =  500
-mse = torch.nn.MSELoss().type(dtype) # loss
-img_noisy_torch = np_to_torch(img_noisy_np).type(dtype)
+    def __len__(self):
+        return self.num_iter
 
-sgld_psnr_list = [] # psnr between sgld out and gt
-sgld_mean = 0
-roll_back = True # To solve the oscillation of model training 
-last_net = None
-psrn_noisy_last = 0
-MCMC_iter = 50
-param_noise_sigma = 2
+    def __getitem__(self, index):
+        # Always return the same image (and maybe a noise tensor or other information if necessary??)
+        return self.image
 
-sgld_mean_each = 0
-sgld_psnr_mean_list = [] # record the PSNR of avg after burn-in
+@trace
+class LightningEvalSearchSGLD(LightningModule):
+    def __init__(self, phantom=None, num_iter=1,
+                lr=0.01, noise_type='gaussian', noise_factor=0.15, resolution=6, 
+                n_channels=1, reg_noise_std_val=1./30.
+                ):
+        super().__init__()
 
-## SGLD
-def add_noise(model):
-    for n in [x for x in model.parameters() if len(x.size()) == 4]:
-        noise = torch.randn(n.size())*param_noise_sigma*learning_rate
-        noise = noise.type(dtype)
-        n.data = n.data + noise
+        torch.autograd.set_detect_anomaly(True)
+        self.automatic_optimization = False
 
-net2 = get_net(input_depth, 'skip', pad,
-            skip_n33d=128, 
-            skip_n33u=128,
-            skip_n11=4,
-            num_scales=5,
-            upsample_mode='bilinear').type(dtype)
+        self.reg_noise_std = tensor(reg_noise_std_val)
+        self.learning_rate = lr
+        self.roll_back = True # to prevent numerical issues
+        self.num_iter = num_iter # max iterations
+        self.burnin_iter = 7000 # burn-in iteration for SGLD
+        self.weight_decay = 5e-8
+        self.show_every =  500
+        self.criteria = torch.nn.MSELoss().type(dtype) # loss
 
-## Input random noise
-net_input = get_noise(input_depth, INPUT, (img_pil.size[1], img_pil.size[0])).type(dtype).detach()
-net_input_saved = net_input.detach().clone()
-noise = net_input.detach().clone()
-i = 0
+        self.sgld_mean = 0
+        self.last_net = None
+        self.psrn_noisy_last = 0
+        self.MCMC_iter = 50
+        self.param_noise_sigma = 2
 
-sample_count = 0
+        self.noise_type=noise_type
+        self.noise_factor=noise_factor
+        self.resolution = resolution
+        self.phantom = generate_phantom(resolution=resolution)
 
-def closure_sgld():
-    global i, net_input, sgld_mean, sample_count, psrn_noisy_last, last_net, sgld_mean_each
-    if reg_noise_std > 0:
-        net_input = net_input_saved + (noise.normal_() * reg_noise_std)
-    out = net2(net_input)
-    total_loss = mse(out, img_noisy_torch)
-    total_loss.backward()
-    out_np = out.detach().cpu().numpy()[0]
-
-    psrn_noisy = compare_psnr(img_noisy_np, out.detach().cpu().numpy()[0])
-    psrn_gt    = compare_psnr(img_np, out_np)
-
-    sgld_psnr_list.append(psrn_gt)
-
-    # Backtracking
-    if roll_back and i % show_every:
-        if psrn_noisy - psrn_noisy_last < -5: 
-            print('Falling back to previous checkpoint.')
-            for new_param, net_param in zip(last_net, net2.parameters()):
-                net_param.detach().copy_(new_param.cuda())
-            return total_loss*0
+        if phantom is None:
+            self.img_np, self.img_noisy_np, _, self.img_noisy_torch = self.preprocess_image(self.resolution, self.noise_type, self.noise_factor)
         else:
-            last_net = [x.detach().cpu() for x in net2.parameters()]
-            psrn_noisy_last = psrn_noisy
-
-    if i % show_every == 0:
-        np_plot(out.detach().cpu().numpy()[0], 'Iter: %d; gt %.2f' % (i, psrn_gt))
+            self.img_np, self.img_noisy_np, _, self.img_noisy_torch = self.preprocess_image(self.resolution, self.noise_type, self.noise_factor, input_img_np=self.phantom)
+        self.net_input = get_noise(input_depth=n_channels, spatial_size=self.img_np.shape[1], noise_type=self.noise_type)
     
-    if i > burnin_iter and np.mod(i, MCMC_iter) == 0:
-        sgld_mean += out_np
-        sample_count += 1.
+    def set_model(self, model):
+        # This will be called after __init__ and will set the candidate model
+        # needed for NAS but not for a standard training loop
+        self.model = model
 
-    if i > burnin_iter:
-        sgld_mean_each += out_np
-        sgld_mean_tmp = sgld_mean_each / (i - burnin_iter)
-        sgld_mean_psnr_each = compare_psnr(img_np, sgld_mean_tmp)
-        sgld_psnr_mean_list.append(sgld_mean_psnr_each) # record the PSNR of avg after burn-in
+    def configure_optimizers(self):
+        """
+        Basic Adam Optimizer
+        LR Scheduler: ReduceLROnPlateau
+        1 Parameter Group
+        """
+        print('Starting optimization with SGLD')
+        optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+        return optimizer
+    
+    def on_train_start(self):
+        """
+        Move all tensors to the GPU to begin training
+        """
+        self.model.to(self.device)
+        self.net_input = self.net_input.to(self.device)
+        self.img_noisy_torch = self.img_noisy_torch.to(self.device)
+        self.reg_noise_std = self.reg_noise_std.to(self.device)
+        self.sample_count = 0
 
-    i += 1
-    return total_loss
+        self.net_input_saved = self.net_input.clone().to(self.device)
+        self.noise = self.net_input.clone().to(self.device)
+        self.i = 0
+        self.counter = 0
+          
+    def forward(self, net_input_saved):
+        torch.autograd.set_detect_anomaly(True)
+        if self.reg_noise_std > 0:
+            net_input = net_input_saved + (self.noise.normal_() * self.reg_noise_std)
+            return self.model(net_input)
+        else:
+            return self.model(net_input_saved)
+
+    def training_step(self, batch, batch_idx):
+        """
+        Deep Image Prior
+
+        training here follows closely from the following two repos: 
+            - the deep image prior repo
+            - a DIP early stopping repo (Lighting has early stopping functionality so this blends the two)
+        """      
+        torch.autograd.set_detect_anomaly(True)
+
+        self.counter += 1
+        opt = self.optimizers()[0]########################################################################
+        opt.zero_grad() ###################################################################################
 
 
-  ## Optimizing 
-print('Starting optimization with SGLD')
-optimizer = torch.optim.Adam(net2.parameters(), lr=LR, weight_decay = weight_decay)
-for j in range(num_iter):
-    optimizer.zero_grad()
-    closure_sgld()
-    optimizer.step()
-    add_noise(net2)
+        print(f"entering forward pass: {self.counter}")
+        r_img_torch = self.forward(self.net_input)
+        print(f"completed forward pass: {self.counter}")
 
-sgld_mean = sgld_mean / sample_count
-sgld_mean_psnr = compare_psnr(img_np, sgld_mean)
+        print(f"entering closure: {self.counter}")
+        # total_loss = self.closure_sgld(r_img_torch)
+        # out needs to be the output of the forward pass
+        def closure():
+            torch.autograd.set_detect_anomaly(True)
+            out = r_img_torch
+            self.total_loss = self.criteria(out, self.img_noisy_torch)
+            self.latest_loss = self.total_loss.item()
+            self.log('loss', self.latest_loss)
+            self.manual_backward(self.total_loss, create_graph=True, retain_graph=True) ######################################################
+            out_np = out.detach().cpu().numpy()[0]
+
+            psrn_noisy = compare_psnr(self.img_noisy_np, out_np)
+
+            # Backtracking
+            if self.roll_back and self.i % self.show_every:
+                if psrn_noisy - self.psrn_noisy_last < -5: 
+                    print('Falling back to previous checkpoint.')
+                    for new_param, net_param in zip(self.last_net, self.model.parameters()):
+                        net_param.detach().copy_(new_param.cuda())
+                    print("completed checkpoint loop")
+                    return self.total_loss*0
+                else:
+                    self.last_net = [x.detach().cpu() for x in self.model.parameters()]
+                    self.psrn_noisy_last = psrn_noisy
+            
+            if self.i > self.burnin_iter and np.mod(self.i, self.MCMC_iter) == 0:
+                print("entering MCMC loop")
+                self.sgld_mean += out_np
+                self.sample_count += 1.
+                print("completed  MCMC loop")
+
+            self.i += 1
+            report_intermediate_result({'loss': self.latest_loss})
+            return self.total_loss
+        opt.step(closure) ##############################################################################
+        print(f"completed closure: {self.counter}")
+
+        if self.counter % self.show_every == 0:
+            self.plot_progress()
+
+        opt.step() ############################################################################
+        print(f"entering add noise: {self.counter}")
+        self.add_noise(self.model)
+        print(f"completed add noise: {self.counter}")
+
+        return {"loss": self.total_loss}
+
+    def on_train_end(self, **kwargs: Any):
+        """
+        Report final metrics and display the results
+        """
+        # final log
+        report_final_result({'loss': self.latest_loss})
+
+        # # plot images to see results
+        self.plot_progress()
+
+    def common_dataloader(self):
+        dataset = SingleImageDataset(self.phantom, self.num_iter)
+        return DataLoader(dataset, batch_size=1)
+
+    def train_dataloader(self):
+        return self.common_dataloader()
+
+    def val_dataloader(self):
+        return self.common_dataloader()
+    
+    def validation_step(self, batch, batch_idx):
+        # your validation logic here
+        torch.autograd.set_detect_anomaly(True)
+        return {'loss': self.total_loss}
+    
+    def optimizer_zero_grad(self, epoch, batch_idx, optimizer, opt_idx):
+        # Not sure if this is the default logic in the nni.retiarii.evaluator.pytorch.LightningModule
+        # needed to modify so it can accept the opt_idx argument
+        optimizer.zero_grad()
+    
+    def configure_gradient_clipping(self, optimizer, opt_idx, gradient_clip_val, gradient_clip_algorithm):
+        # Not sure if this is the default logic in the nni.retiarii.evaluator.pytorch.LightningModule
+        # needed to modify so it can accept the opt_idx argument
+        # now need to define the clipping logic
+        self.clip_gradients(
+            optimizer,
+            gradient_clip_val=gradient_clip_val,
+            gradient_clip_algorithm=gradient_clip_algorithm
+        )
+
+    def preprocess_image(self, resolution, noise_type, noise_factor, input_img_np=None):
+        """
+        Generates an image (or takes an input phantom), adds noise, and converts it to both numpy and torch tensors.
+
+        Args:
+        - resolution (int): Resolution for the phantom image.
+        - noise_type (str): Type of noise to add.
+        - noise_factor (float): Noise factor.
+        - input_img_np (numpy.ndarray, optional): Input raw image in numpy format. If not provided, a new image will be generated.
+
+        Returns:
+        - img_np (numpy.ndarray): Original image in numpy format.
+        - img_noisy_np (numpy.ndarray): Noisy image in numpy format.
+        - img_torch (torch.Tensor): Original image in torch tensor format.
+        - img_noisy_torch (torch.Tensor): Noisy image in torch tensor format.
+        """
+        if input_img_np is None:
+            raw_img_np = generate_phantom(resolution=resolution) # 1x64x64 np array
+        else:
+            raw_img_np = input_img_np.copy() # 1x64x64 np array
+            
+        img_np = raw_img_np.copy() # 1x64x64 np array
+        img_torch = torch.tensor(raw_img_np, dtype=torch.float32).unsqueeze(0) # 1x1x64x64 torch tensor
+        img_noisy_torch = add_selected_noise(img_torch, noise_type=noise_type, noise_factor=noise_factor) # 1x1x64x64 torch tensor
+        img_noisy_np = img_noisy_torch.squeeze(0).numpy() # 1x64x64 np array
+        
+        return img_np, img_noisy_np, img_torch, img_noisy_torch
+    
+    def add_noise(self, net):
+        for n in [x for x in net.parameters() if len(x.size()) == 4]:
+            noise = torch.randn(n.size())*self.param_noise_sigma*self.learning_rate
+            noise = noise.to(self.device)
+            n.data = n.data + noise
+
+    def plot_progress(self):
+        denoised_img = self.forward(self.net_input).detach().cpu().squeeze().numpy()
+        
+        _, ax = plt.subplots(1, 3, figsize=(10, 5))
+
+        ax[0].imshow(self.img_np.squeeze(), cmap='gray')
+        ax[0].set_title("Original Image")
+        ax[0].axis('off')
+
+        ax[1].imshow(denoised_img, cmap='gray')
+        ax[1].set_title("Denoised Image")
+        ax[1].axis('off')
+
+        ax[2].imshow(self.img_noisy_torch.detach().cpu().squeeze().numpy(), cmap='gray')
+        ax[2].set_title("Noisy Image")
+        ax[2].axis('off')
+
+        plt.tight_layout()
+        plt.show()
