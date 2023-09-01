@@ -1287,13 +1287,13 @@ files = [
 
 [[package]]
 name = "imageio"
-version = "2.31.1"
+version = "2.31.2"
 description = "Library for reading and writing a wide range of image, video, scientific, and volumetric data formats."
 optional = false
 python-versions = ">=3.7"
 files = [
-    {file = "imageio-2.31.1-py3-none-any.whl", hash = "sha256:4106fb395ef7f8dc0262d6aa1bb03daba818445c381ca8b7d5dfc7a2089b04df"},
-    {file = "imageio-2.31.1.tar.gz", hash = "sha256:f8436a02af02fd63f272dab50f7d623547a38f0e04a4a73e2b02ae1b8b180f27"},
+    {file = "imageio-2.31.2-py3-none-any.whl", hash = "sha256:a78fbcb33432042a4d6993c87f3ea1f136d908318ce7dda857846ccff73294de"},
+    {file = "imageio-2.31.2.tar.gz", hash = "sha256:ae19221f4a8f118f1c9451e8f5357faeeacdf956198cf374bc8ab00f1ff7d525"},
 ]
 
 [package.dependencies]
@@ -4427,6 +4427,23 @@ files = [
 typing-extensions = "*"
 
 [[package]]
+name = "torch-xla"
+version = "1.10"
+description = "XLA bridge for PyTorch"
+optional = false
+python-versions = "*"
+files = [
+    {file = "torch_xla-1.10-cp38-cp38-linux_x86_64.whl", hash = "sha256:ec42991ed0067fcd2f68521bf39bd74a8be1d7fb3e9e559d29914814cbc8f693"},
+]
+
+[package.extras]
+tpuvm = ["libtpu_nightly @ https://storage.googleapis.com/cloud-tpu-tpuvm-artifacts/wheels/libtpu-nightly/libtpu_nightly-0.1.dev20211015-py3-none-any.whl"]
+
+[package.source]
+type = "url"
+url = "https://storage.googleapis.com/tpu-pytorch/wheels/tpuvm/torch_xla-1.10-cp38-cp38-linux_x86_64.whl"
+
+[[package]]
 name = "torchmetrics"
 version = "1.0.3"
 description = "PyTorch native Metrics"
@@ -4921,4 +4938,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.8"
-content-hash = "68f0978f965969b29acc7ee310b7842dfca23a51cc10bea8863b11c7d4212a16"
+content-hash = "92cc2b4cb695f020175c4f5dc9ba6c4b2d5603c235e286a81edd5cf921c63e68"
