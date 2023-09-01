@@ -14,7 +14,7 @@ from torch import optim, tensor
 
 from typing import Any
 
-from sgld.utils import *
+from sgld.utils.common_utils import *
 from noises import add_selected_noise
 from phantom import generate_phantom
 

@@ -5,8 +5,6 @@ from nni import trace
 from nni.retiarii import model_wrapper
 from nni.retiarii.nn.pytorch import Cell
 
-from darts.common_utils import *
-
 @trace
 def conv_2d(C_in, C_out, kernel_size=3, dilation=1, padding=1, activation=None):
     return nn.Sequential(
