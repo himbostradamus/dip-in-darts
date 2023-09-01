@@ -1,0 +1,12 @@
+Noise_Type,Avg_Optimal_Factor,
+gaussian,0.09683,
+salt_and_pepper,0.0075,.0014
+speckle,0.26697,
+uniform,0.13804,
+exponential,0.05647,
+rayleigh,0.05636,
+erlang,0.44335,
+brownian,0.15326,
+quantization,2.5,
+stripe,0.0979,
+multiplicative,0.26691,
