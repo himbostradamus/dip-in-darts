@@ -1,17 +1,15 @@
-import numpy as np
-import torch
-from skimage.metrics import peak_signal_noise_ratio as compare_psnr
-
-from torch.utils.data import Dataset
-from torch import optim, tensor, zeros_like
-
-import pytorch_lightning as pl
-
 from nni import trace, report_intermediate_result, report_final_result
-import nni.retiarii.nn.pytorch as nn
 from nni.retiarii.evaluator.pytorch import LightningModule
 from nni.retiarii.evaluator.pytorch.lightning import DataLoader
-from lightning.pytorch.callbacks.early_stopping import EarlyStopping
+
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint
+
+from skimage.metrics import peak_signal_noise_ratio as compare_psnr
+
+import torch
+from torch.utils.data import Dataset
+from torch import optim, tensor
 
 from typing import Any
 
@@ -45,7 +43,12 @@ class LightningEvalSearchSGLD(LightningModule):
         super().__init__()
 
         torch.autograd.set_detect_anomaly(True)
-        self.automatic_optimization = False
+
+        self.checkpoint_callback = ModelCheckpoint(
+            dirpath="./checkpoints", filename="checkpoint_{epoch}",
+            save_top_k=2,  # save the last two epochs for backtracking
+            monitor="psrn_noisy", mode="max"
+)
 
         self.reg_noise_std = tensor(reg_noise_std_val)
         self.learning_rate = lr
@@ -58,7 +61,7 @@ class LightningEvalSearchSGLD(LightningModule):
 
         self.sgld_mean = 0
         self.last_net = None
-        self.psrn_noisy_last = 0
+        self.psnr_noisy_last = 0
         self.MCMC_iter = 50
         self.param_noise_sigma = 2
 
@@ -101,7 +104,7 @@ class LightningEvalSearchSGLD(LightningModule):
         self.net_input_saved = self.net_input.clone().to(self.device)
         self.noise = self.net_input.clone().to(self.device)
         self.i = 0
-        self.counter = 0
+        self.iteration_counter = 0
           
     def forward(self, net_input_saved):
         torch.autograd.set_detect_anomaly(True)
@@ -110,6 +113,38 @@ class LightningEvalSearchSGLD(LightningModule):
             return self.model(net_input)
         else:
             return self.model(net_input_saved)
+        
+    def closure(self, r_img_torch):
+        torch.autograd.set_detect_anomaly(True)
+        out = r_img_torch
+        self.total_loss = self.criteria(out, self.img_noisy_torch)
+        # self.total_loss.backward()
+        self.latest_loss = self.total_loss.item()
+        self.log('loss', self.latest_loss)
+        out_np = out.detach().cpu().numpy()[0]
+
+        self.psnr_noisy = compare_psnr(self.img_noisy_np, out_np)
+        self.log("psrn_noisy", self.psnr_noisy)
+
+        # Backtracking logic
+        if self.roll_back and self.iteration_counter % self.show_every == 0:
+            if self.psnr_noisy - self.psnr_noisy_last < -5:
+                print(f'itearation: {self.iteration_counter} -- Falling back to previous checkpoint.')
+                
+                # # Load checkpoint
+                # self.load_from_checkpoint(self.checkpoint_callback.best_model_path)
+
+                # Load checkpoint
+                checkpoint = torch.load(self.checkpoint_callback.best_model_path)
+                self.model.load_state_dict(checkpoint['state_dict'])
+                
+                print(f"Resumed training from checkpoint {self.checkpoint_callback.best_model_path}")
+                
+            self.psnr_noisy_last = self.psnr_noisy
+
+            self.i += 1
+        if self.iteration_counter % 25 == 0:
+            report_intermediate_result({'iteration': self.iteration_counter ,'loss': self.latest_loss, 'psnr_noisy': self.psnr_noisy})
 
     def training_step(self, batch, batch_idx):
         """
@@ -120,70 +155,34 @@ class LightningEvalSearchSGLD(LightningModule):
             - a DIP early stopping repo (Lighting has early stopping functionality so this blends the two)
         """      
         torch.autograd.set_detect_anomaly(True)
+        self.iteration_counter += 1
 
-        self.counter += 1
-        opt = self.optimizers()[0]########################################################################
-        opt.zero_grad() ###################################################################################
-
-
-        print(f"entering forward pass: {self.counter}")
+        # print(f"entering forward pass: {self.iteration_counter}")
         r_img_torch = self.forward(self.net_input)
-        print(f"completed forward pass: {self.counter}")
+        # print(f"completed forward pass: {self.iteration_counter}")
 
-        print(f"entering closure: {self.counter}")
-        # total_loss = self.closure_sgld(r_img_torch)
-        # out needs to be the output of the forward pass
-        def closure():
-            torch.autograd.set_detect_anomaly(True)
-            out = r_img_torch
-            self.total_loss = self.criteria(out, self.img_noisy_torch)
-            self.latest_loss = self.total_loss.item()
-            self.log('loss', self.latest_loss)
-            self.manual_backward(self.total_loss, create_graph=True, retain_graph=True) ######################################################
-            out_np = out.detach().cpu().numpy()[0]
+        # print(f"entering closure: {self.iteration_counter}")
+        self.closure(r_img_torch)
+        # print(f"completed closure: {self.iteration_counter}")
 
-            psrn_noisy = compare_psnr(self.img_noisy_np, out_np)
-
-            # Backtracking
-            if self.roll_back and self.i % self.show_every:
-                if psrn_noisy - self.psrn_noisy_last < -5: 
-                    print('Falling back to previous checkpoint.')
-                    for new_param, net_param in zip(self.last_net, self.model.parameters()):
-                        net_param.detach().copy_(new_param.cuda())
-                    print("completed checkpoint loop")
-                    return self.total_loss*0
-                else:
-                    self.last_net = [x.detach().cpu() for x in self.model.parameters()]
-                    self.psrn_noisy_last = psrn_noisy
-            
-            if self.i > self.burnin_iter and np.mod(self.i, self.MCMC_iter) == 0:
-                print("entering MCMC loop")
-                self.sgld_mean += out_np
-                self.sample_count += 1.
-                print("completed  MCMC loop")
-
-            self.i += 1
-            report_intermediate_result({'loss': self.latest_loss})
-            return self.total_loss
-        opt.step(closure) ##############################################################################
-        print(f"completed closure: {self.counter}")
-
-        if self.counter % self.show_every == 0:
+        if self.iteration_counter % self.show_every == 0:
             self.plot_progress()
-
-        opt.step() ############################################################################
-        print(f"entering add noise: {self.counter}")
-        self.add_noise(self.model)
-        print(f"completed add noise: {self.counter}")
-
         return {"loss": self.total_loss}
+    
+    def on_after_step(self):
+        """
+        Add noise
+        """
+        print(f"entering add noise: {self.iteration_counter}")
+        self.add_noise(self.model)
+        print(f"completed add noise: {self.iteration_counter}")
 
     def on_train_end(self, **kwargs: Any):
         """
         Report final metrics and display the results
         """
         # final log
-        report_final_result({'loss': self.latest_loss})
+        report_final_result({'loss': self.latest_loss, 'psnr_noisy': self.psnr_noisy_last})
 
         # # plot images to see results
         self.plot_progress()
@@ -271,3 +270,18 @@ class LightningEvalSearchSGLD(LightningModule):
 
         plt.tight_layout()
         plt.show()
+
+
+
+### old backtracking ###
+        # # Backtracking
+        # if self.roll_back and self.i % self.show_every:
+        #     if psrn_noisy - self.psrn_noisy_last < -5: 
+        #         print('Falling back to previous checkpoint.')
+        #         for new_param, net_param in zip(self.last_net, self.model.parameters()):
+        #             net_param.detach().copy_(new_param.cuda())
+        #         print("completed checkpoint loop")
+        #         return self.total_loss*0
+        #     else:
+        #         self.last_net = [x.detach().cpu() for x in self.model.parameters()]
+        #         self.psrn_noisy_last = psrn_noisy

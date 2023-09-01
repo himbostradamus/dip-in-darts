@@ -66,8 +66,8 @@ def convs(C_in, C_out):
         # ("conv2d_5x5_SiLU", conv_2d(C_in, C_out, kernel_size=5, padding=2, activation=nn.SiLU())),
 
 
-        # ("convDS_1x1_Relu", depthwise_separable_conv(C_in, C_out)),
-        # ("convDS_1x1_SiLU", depthwise_separable_conv(C_in, C_out, activation=nn.SiLU())),
+        ("convDS_1x1_Relu", depthwise_separable_conv(C_in, C_out)),
+        ("convDS_1x1_SiLU", depthwise_separable_conv(C_in, C_out, activation=nn.SiLU())),
 
         # ("convDS_3x3_Relu", depthwise_separable_conv(C_in, C_out, kernel_size=3, padding=1)),
         # ("convDS_3x3_SiLU", depthwise_separable_conv(C_in, C_out, kernel_size=3, padding=1, activation=nn.SiLU())),
