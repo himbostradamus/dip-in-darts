@@ -19,6 +19,8 @@ jupyter = "^1.0.0"
 lightning = "1.9.5"
 scikit-image = "^0.21.0"
 tianshou = "^0.5.1"
+ipykernel = "^6.25.1"
+graphviz = "^0.20.1"
 
 
 [build-system]
