@@ -28,6 +28,12 @@ def add_poisson_noise(img):
     noisy_img = torch.poisson(img_copy * 255) / 255
     return noisy_img
 
+# def add_poisson_noise(img, noise_factor=1.0):
+#     img_copy = img.clone()
+#     # Scale the image's intensity by noise_level
+#     noisy_img = torch.poisson(img_copy * 255 * noise_factor) / (255 * noise_factor)
+#     return noisy_img
+
 def add_speckle_noise(img, noise_factor=0.5):
     img_copy = img.clone()
     noise = torch.randn_like(img_copy) * noise_factor
