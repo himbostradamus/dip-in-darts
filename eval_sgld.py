@@ -14,9 +14,9 @@ from torch import optim, tensor
 
 from typing import Any
 
-from darts.common_utils import *
-from darts.noises import add_selected_noise
-from darts.phantom import generate_phantom
+from sgld.utils import *
+from noises import add_selected_noise
+from phantom import generate_phantom
 
 torch.backends.cudnn.enabled = True
 torch.backends.cudnn.benchmark =True
