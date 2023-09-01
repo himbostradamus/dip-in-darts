@@ -72,7 +72,7 @@ def add_brownian_noise(img, noise_factor=0.5):
     noisy_img = img_copy + torch.tensor(brownian_noise).float()
     return torch.clamp(noisy_img, 0., 1.)
 
-def add_quantization_noise(img, levels=2):
+def add_quantization_noise(img, levels=3):
     img_copy = img.clone()
     step = 1.0 / levels
     quantized = torch.round(img_copy / step) * step
