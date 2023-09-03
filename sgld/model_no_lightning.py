@@ -1,27 +1,33 @@
 # this is the HPO Search Space
-# from torch.utils.data import DataLoader
+
+import nni
+import torch
+from torch import nn
+from torch.utils.data import DataLoader
+from torchvision import datasets
+from torchvision.transforms import ToTensor
 
 import matplotlib.pyplot as plt
-import nni
 
 import numpy as np
+from models import *
 import torch
 import torch.optim
 from torch.optim import Optimizer
-from torch.utils.data import Dataset #, DataLoader
+from torch.utils.data import Dataset
 from torch import tensor
 from skimage.metrics import peak_signal_noise_ratio as compare_psnr
 from utils.common_utils import *
 
 from phantom import generate_phantom
 
-from nni.retiarii.evaluator.pytorch import Lightning, Trainer, LightningModule
-from nni.retiarii.evaluator.pytorch.lightning import DataLoader
+from pytorch_lightning.callbacks import ModelCheckpoint
 
-# from nni.nas.evaluator.pytorch import Lightning, Trainer, LightningModule
-# from nni.nas.evaluator.pytorch.lightning import DataLoader
+from nni.nas.evaluator.pytorch import Lightning, Trainer, LightningModule
+from nni.nas.evaluator.pytorch.lightning import DataLoader
 
 from typing import Any
+
 
 torch.backends.cudnn.enabled = True
 torch.backends.cudnn.benchmark =True
@@ -53,7 +59,6 @@ class SGLD_HPO(LightningModule):
         buffer_size = 100,
         model=get_unet(),
         weight_decay=5e-8,
-        # model_cls=None,
 
     ):
         super().__init__()
@@ -83,10 +88,7 @@ class SGLD_HPO(LightningModule):
         
         # network input
         self.input_depth = 1
-        self.model = model.type(self.dtype) ### only for non NAS
-        # self.model_cls = model_cls
-
-
+        self.model = model.type(self.dtype)
         self.net_input = get_noise(self.input_depth, 'noise', (img_np.shape[-2:][1], img_np.shape[-2:][0])).type(self.dtype).detach()
         self.net_input_saved = self.net_input.detach().clone()
         self.noise = self.net_input.detach().clone()
@@ -120,13 +122,6 @@ class SGLD_HPO(LightningModule):
                 - But could it work?? :`( I couldn't figure it out
         """
         return torch.optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
-    
-    # def set_model(self, model):
-    #     # This will be called after __init__ and will set the candidate model
-    #     # needed for NAS but not for a standard training loop
-    #     if self.model_cls is not None:
-    #         self.model = self.model_cls
-    #     self.model = model
 
     def train_dataloader(self):
         """
@@ -154,36 +149,15 @@ class SGLD_HPO(LightningModule):
         # Initialize Iterations
         self.i=0
         self.sample_count=0
-        print('Starting optimization with SGLD')
 
         # bon voyage
-        #                    *     .--.
-        #                         / /  `
-        #        +               | |
-        #               '         \ \__,
-        #           *          +   '--'  *
-        #               +   /\
-        #  +              .'  '.   *
-        #         *      /======\      +
-        #               ;:.  _   ;
-        #               |:. (_)  |
-        #               |:.  _   |
-        #     +         |:. (_)  |          *
-        #               ;:.      ;
-        #             .' \:.    / `.
-        #            / .-'':._.'`-. \
-        #            |/    /||\    \|
-        #          _..--"""````"""--.._
-        #    _.-'``                    ``'-._
-        #  -'                                '-
-
+        print('Starting optimization with SGLD')
 
     def forward(self, net_input_saved):
         """
         Forward pass of the model
         occurs in the closure function in this implementation
         """
-        print(f"made it to the start of the {self.i+1} forward start loop!")
         if self.reg_noise_std > 0:
             self.net_input = self.net_input_saved + (self.noise.normal_() * self.reg_noise_std)
             return self.model(self.net_input)
@@ -224,7 +198,6 @@ class SGLD_HPO(LightningModule):
                 self.psrn_noisy_last = psrn_noisy
 
     def closure_sgld(self):
-        print(f"made it to the start of the {self.i+1} closure start loop!")
         out = self.forward(self.net_input)
 
         # compute loss
@@ -251,7 +224,7 @@ class SGLD_HPO(LightningModule):
         if self.burnin_over and np.mod(self.i, self.MCMC_iter) == 0:
             self.sgld_mean += out_np
             self.sample_count += 1.
-            # sgld_psnr = compare_psnr(self.img_np, self.sgld_mean / self.sample_count)
+            sgld_psnr = compare_psnr(self.img_np, self.sgld_mean / self.sample_count)
             # self.log({'loss': total_loss, 'psnr_gt': psrn_gt, 'psnr_sgld': sgld_psnr})
             # nni.report_intermediate_result({'loss': total_loss, 'psnr_gt': psrn_gt, 'psnr_sgld': sgld_psnr})
 
@@ -268,6 +241,8 @@ class SGLD_HPO(LightningModule):
         #     nni.report_intermediate_result({'loss': total_loss, 'psnr_gt': psrn_gt})
 
         self.i += 1
+        self.log('psnr',psrn_gt)
+        nni.report_final_result('psnr',psrn_gt)
         return total_loss
 
     def add_noise(self, net):
@@ -286,28 +261,35 @@ class SGLD_HPO(LightningModule):
         ---> Straight to error city calling this add_noise in the training step
         ---> Consider using the on_train_batch_end hook? (each batch is only one iteration)
         """
-        print(f"made it to the start of the {self.i+1} training start loop!")
         optimizer = self.optimizers()
-        print(f"made it past the optimizer!")
         optimizer.zero_grad()
-        print(f"made it past the zero grad!")
         loss = self.closure_sgld()
-        print(f"made it past the closure!")
         optimizer.step()
-        print(f"made it past the step!")
         self.add_noise(self.model)
-        print(f"made it past the add noise!")
-        if self.i % 20 == 0:
-            self.log('psnr',self.sgld_psnr_list[-1])
-            nni.report_intermediate_result(self.sgld_psnr_list[-1])
-        print(f"made it to the end of the {self.i+1} training start loop!")
         return loss
 
     def on_train_end(self) -> None:
         """
         May all your dreams come true
         """
-        nni.report_final_result(self.sgld_psnr_list[-1])
+        # get output by sending net_input_saved through the network
+        # compute PSNR
+        out = self.forward(self.net_input_saved)
+        out_np = out.detach().cpu().numpy()[0]
+        psrn_gt    = compare_psnr(self.img_np, out_np)
+        
+        # compute SGLD mean from MCMC samples
+        sgld_final = self.sgld_mean / self.sample_count
+        sgld_final_psnr = compare_psnr(self.img_np, sgld_final)
+        
+        # compute SGLD mean from all post burnin samples
+        self.sgld_mean_tmp = self.sgld_mean_each / self.burnin_iter
+        sgld_final_psnr_tmp = compare_psnr(self.img_np, self.sgld_mean_tmp)
+        
+        # self.log({'psnr_gt': psrn_gt, 'psnr_sgld': sgld_final_psnr, 'psnr_sgld_each': sgld_final_psnr_tmp})
+        # nni.report_final_result({'psnr_gt': psrn_gt, 'psnr_sgld': sgld_final_psnr, 'psnr_sgld_each': sgld_final_psnr_tmp})
+        self.log('psnr',psrn_gt)
+        nni.report_final_result('psnr',psrn_gt)
 
     def check_stop(self, current, cur_epoch):
         """
@@ -356,9 +338,10 @@ print(f"Using {device} device")
 dtype = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor 
 
 # choose iterations
-num_iter = 500 # max iterations
+num_iter = 1e4 # max iterations
 
 # get image
+# generate phantom stored in subfolder of parent directory
 resolution = 6
 max_depth = resolution - 1
 phantom = generate_phantom(resolution=resolution)
@@ -389,15 +372,26 @@ trainer = Trainer(
             max_epochs=num_iter,
             fast_dev_run=False,
             gpus=1,
-            enable_checkpointing=False,
-            log_every_n_steps=20,
+            checkpoint_callback=False
             )
+
+# Initialize ModelCheckpoint callback
+checkpoint_callback = ModelCheckpoint(
+    dirpath='./{lightning_logs}/{logger_name}/version_{version}/checkpoints/',
+    filename='{epoch}-{step}',
+    every_n_epochs=100,
+    save_top_k=1,
+)
+
+# Add the checkpoint callback to trainer
+trainer.callbacks.append(checkpoint_callback)
             
+if not hasattr(trainer, 'optimizer_frequencies'):
+    trainer.optimizer_frequencies = []
+
 # Create the lighting object for evaluator
-train_loader = DataLoader(SingleImageDataset(img_noisy_np, num_iter=1), batch_size=1, num_workers=0)
-val_loader = DataLoader(SingleImageDataset(img_noisy_np, num_iter=1), batch_size=1, num_workers=0)
+train_loader = DataLoader(SingleImageDataset(img_noisy_np, num_iter=1), batch_size=1)
+val_loader = DataLoader(SingleImageDataset(img_noisy_np, num_iter=1), batch_size=1)
 
 lightning = Lightning(lightning_module=module, trainer=trainer, train_dataloaders=train_loader, val_dataloaders=val_loader)
-
-# ### Regular HPO -- just use this ###
 lightning.fit(model)

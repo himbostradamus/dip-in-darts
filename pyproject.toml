@@ -7,7 +7,7 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.8"
-nni = "^2.10.1"
+nni = "2.10"
 torch = "1.10.0"
 pytorch-lightning = "1.6.1"
 torchvision = "0.11.1"
@@ -24,7 +24,8 @@ gputil = "^1.4.0"
 scikit-learn = "^1.3.0"
 seaborn = "^0.12.2"
 scikit-image = "^0.21.0"
-torch-xla = {url = "https://storage.googleapis.com/tpu-pytorch/wheels/tpuvm/torch_xla-1.10-cp38-cp38-linux_x86_64.whl"}
+typeguard = "4.1.3"
+pandas = "1.5.2"
 
 
 [build-system]

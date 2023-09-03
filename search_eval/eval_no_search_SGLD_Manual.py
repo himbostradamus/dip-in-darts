@@ -10,7 +10,7 @@ from skimage.metrics import peak_signal_noise_ratio as compare_psnr
 import torch
 from torch.optim import Optimizer
 from torch.utils.data import Dataset
-from torch import tensor
+from torch import tensor, optim
 
 import matplotlib.pyplot as plt
 
@@ -18,7 +18,6 @@ from typing import Any
 import numpy as np
 
 from .utils.common_utils import get_noise
-from .optimizers.sgld import SGLD
 
 torch.backends.cudnn.enabled = True
 torch.backends.cudnn.benchmark =True
@@ -52,6 +51,7 @@ class LightningEvalSearchSGLD(LightningModule):
                 ):
         super().__init__()
         torch.autograd.set_detect_anomaly(True)
+        self.automatic_optimization = True
         
         # network features
         self.model_cls = model_cls
@@ -81,28 +81,24 @@ class LightningEvalSearchSGLD(LightningModule):
         self.param_noise_sigma = 2
 
         # image and noise
-        self.phantom = phantom
-        self.img_np = phantom
-        self.img_noisy_np = phantom_noisy
+        # move to float 32 instead of float 64
+
+        self.phantom = np.float32(phantom)
+        self.img_np = np.float32(phantom)
+        self.img_noisy_np = np.float32(phantom_noisy)
 
         self.img_noisy_torch = torch.tensor(self.img_noisy_np, dtype=torch.float32).unsqueeze(0)
         self.net_input = get_noise(self.input_depth, 'noise', (self.img_np.shape[-2:][1], self.img_np.shape[-2:][0])).type(self.dtype).detach()
 
-    def configure_optimizers(self):
+    def configure_optimizers(self) -> Optimizer:
         """
-        Basic Adam Optimizer
-        LR Scheduler: ReduceLROnPlateau
-        1 Parameter Group
+        We are doing a manual implementation of the SGLD optimizer
+        There is a SGLD optimizer that can be found here:
+            - https://pysgmcmc.readthedocs.io/en/pytorch/_modules/pysgmcmc/optimizers/sgld.html
+            - Implementing this would greatly simplify the training step
+                - But could it work?? :`( I couldn't figure it out
         """
-        print('Starting optimization with SGLD')
-        #optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
-        optimizer = SGLD(
-                        self.model.parameters(), 
-                        lr=self.learning_rate, 
-                        num_burn_in_steps=self.burnin_iter, 
-                        precondition_decay_rate=1-self.weight_decay
-                        )
-        return optimizer
+        return torch.optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
     
     def on_train_start(self):
         """
@@ -117,7 +113,8 @@ class LightningEvalSearchSGLD(LightningModule):
         self.net_input_saved = self.net_input.clone().to(self.device)
         self.noise = self.net_input.clone().to(self.device)
         self.i = 0
-        self.iteration_counter = 0
+        # self.iteration_counter = 0
+        self.plot_progress()
           
     def forward(self, net_input_saved):
         torch.autograd.set_detect_anomaly(True)
@@ -127,15 +124,15 @@ class LightningEvalSearchSGLD(LightningModule):
         else:
             return self.model(net_input_saved)
         
-    def closure(self, r_img_torch):
-        out = r_img_torch
+    def closure(self):
+        torch.autograd.set_detect_anomaly(True)
+        out = self.forward(self.net_input)
         self.total_loss = self.criteria(out, self.img_noisy_torch)
         # self.total_loss.backward()
         self.latest_loss = self.total_loss.item()
         self.log('loss', self.latest_loss)
         out_np = out.detach().cpu().numpy()[0]
 
-        print(f"\n\nimg_noisy_np type: {self.img_noisy_np.dtype} -- out_np type: {out_np.dtype} \n\n")
         self.psnr_noisy = compare_psnr(self.img_noisy_np, out_np)
 
         self.log("psrn_noisy", self.psnr_noisy)
@@ -150,50 +147,57 @@ class LightningEvalSearchSGLD(LightningModule):
             self.sgld_mean_psnr_each = compare_psnr(self.img_np, sgld_mean_tmp)
             self.sgld_psnr_mean_list.append(self.sgld_mean_psnr_each) # record the PSNR of avg after burn-in
 
-        if self.iteration_counter % 10 == 0 and self.i > self.burnin_iter:
+        if self.i % 10 == 0 and self.i > self.burnin_iter:
             report_intermediate_result({
-                'iteration': self.iteration_counter ,
-                'loss': self.latest_loss, 
+                'iteration': self.i ,
+                'loss': round(self.latest_loss,5), 
                 'sample count': self.i - self.burnin_iter, 
-                'psnr_sgld_last': self.sgld_psnr_mean_list[-1]})
-        elif self.iteration_counter % 10 == 0:
+                'psnr_sgld_last': round(self.sgld_psnr_mean_list[-1],5)
+                })
+        elif self.i % 10 == 0:
             report_intermediate_result({
-                'iteration': self.iteration_counter ,
+                'iteration': self.i ,
                 'loss': round(self.latest_loss,5),
-                'psnr_noisy': round(self.psnr_noisy,5)})
+                'psnr_noisy': round(self.psnr_noisy,5)
+                })
 
         self.i += 1 # this may cause a problem with two iterations per batch
 
-    def training_step(self, batch, batch_idx):
+        return self.total_loss
+
+    def add_noise(self, net):
         """
-        Deep Image Prior
+        Add noise to the network parameters
+        This is the critical part of SGLD
+        """
+        for n in [x for x in net.parameters() if len(x.size()) == 4]:
+            noise = torch.randn(n.size())*self.param_noise_sigma*self.learning_rate
+            #noise = noise.type(self.dtype)
+            noise = noise.type(self.dtype).to(self.device)
+            n.data = n.data + noise
 
-        training here follows closely from the following two repos: 
-            - the deep image prior repo
-            - a DIP SGLD repo 
-        (NNI needs Lighting Module for the evaluator so this blends the two)
-        """      
-        self.iteration_counter += 1
-
-        r_img_torch = self.forward(self.net_input)
-
-        self.closure(r_img_torch)
-
-        if self.iteration_counter % self.show_every == 0:
-            self.plot_progress()
-        return {"loss": self.total_loss}
+    def training_step(self, batch: Any, batch_idx: int) -> Any:
+        """
+        Oh the places you'll go
+        ---> Straight to error city calling this add_noise in the training step
+        ---> Consider using the on_train_batch_end hook? (each batch is only one iteration)
+        """
+        # optimizer = self.optimizers()
+        # optimizer.zero_grad()
+        loss = self.closure()
+        # optimizer.step()
+        return {"loss": loss}
 
     def on_train_batch_end(self, outputs, batch, batch_idx, *args, **kwargs):
         """
         Add noise for SGLD
         """
-        # Get current optimizer
         optimizer = self.optimizers()
-
-        # if the optimizer is Adam, add noise
         if isinstance(optimizer, torch.optim.Adam):
             self.add_noise(self.model)
-        # if the opinion is SGLD, do nothing
+
+        if self.i % self.show_every == 0:
+            self.plot_progress()
 
     def on_train_end(self, **kwargs: Any):
         """
@@ -230,12 +234,6 @@ class LightningEvalSearchSGLD(LightningModule):
             gradient_clip_val=gradient_clip_val,
             gradient_clip_algorithm=gradient_clip_algorithm
         )
-    
-    def add_noise(self, net):
-        for n in [x for x in net.parameters() if len(x.size()) == 4]:
-            noise = torch.randn(n.size())*self.param_noise_sigma*self.learning_rate
-            noise = noise.to(self.device)
-            n.data = n.data + noise
         
     def plot_progress(self):
         if self.i < self.burnin_iter*1.1:

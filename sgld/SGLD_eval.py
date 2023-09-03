@@ -11,7 +11,7 @@ from torch.optim import Optimizer
 from torch.utils.data import Dataset
 from torch import tensor
 from skimage.metrics import peak_signal_noise_ratio as compare_psnr
-from utils.denoising_utils import *
+from utils.common_utils import *
 
 import seaborn as sns
 

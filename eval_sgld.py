@@ -15,8 +15,8 @@ from torch import optim, tensor
 from typing import Any
 
 from sgld.utils.common_utils import *
-from noises import add_selected_noise
-from phantom import generate_phantom
+from phantoms.noises import add_selected_noise
+from phantoms.phantom import generate_phantom
 
 torch.backends.cudnn.enabled = True
 torch.backends.cudnn.benchmark =True
