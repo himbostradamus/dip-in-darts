@@ -90,7 +90,7 @@ def add_poisson_noise(img):
 
 # def add_poisson_noise(img, noise_factor=1.0):
 #     img_copy = img.clone()
-#     # Scale the image's intensity by noise_level
+#     # noise_factor the image's intensity by noise_level
 #     noisy_img = torch.poisson(img_copy * 255 * noise_factor) / (255 * noise_factor)
 #     return noisy_img
 
@@ -106,21 +106,21 @@ def add_uniform_noise(img, noise_factor=0.5):
     noisy_img = img_copy + noise
     return torch.clamp(noisy_img, 0., 1.)
 
-def add_exponential_noise(img, scale=0.1):
+def add_exponential_noise(img, noise_factor=0.1):
     img_copy = img.clone()
-    noise = torch.from_numpy(np.random.exponential(scale, img_copy.shape)).float()
+    noise = torch.from_numpy(np.random.exponential(noise_factor, img_copy.shape)).float()
     noisy_img = img_copy + noise
     return torch.clamp(noisy_img, 0., 1.)
 
-def add_rayleigh_noise(img, scale=0.1):
+def add_rayleigh_noise(img, noise_factor=0.1):
     img_copy = img.clone()
-    noise = torch.from_numpy(np.random.rayleigh(scale, img_copy.shape)).float()
+    noise = torch.from_numpy(np.random.rayleigh(noise_factor, img_copy.shape)).float()
     noisy_img = img_copy + noise
     return torch.clamp(noisy_img, 0., 1.)
 
-def add_erlang_noise(img, shape=2.0, scale=0.1):
+def add_erlang_noise(img, shape=2.0, noise_factor=0.1):
     img_copy = img.clone()
-    noise = torch.from_numpy(np.random.gamma(shape, scale, img_copy.shape)).float()
+    noise = torch.from_numpy(np.random.gamma(shape, noise_factor, img_copy.shape)).float()
     noisy_img = img_copy + noise
     return torch.clamp(noisy_img, 0., 1.)
 
