@@ -28,8 +28,10 @@ print(params)
 total_iterations = 1400
 show_every = 200
 resolution = 64
-phantom = np.load(f'phantoms/ground_truth/{resolution}/{45}.npy')
-phantom_noisy = np.load(f'phantoms/gaussian/resolution_{resolution}/noise_level_.09/pangtom_{45}_gaussian_.09.npy')
+phantom =       np.load(f'phantoms/ground_truth/{resolution}/{45}.npy')
+phantom_noisy = np.load(f'phantoms/gaussian/res_{resolution}/nl_0.09/p_{45}.npy')
+
+
 
 model = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet', in_channels=1, out_channels=1, init_features=64, pretrained=False)
 phantom_noisy = add_gaussian_noise(torch.from_numpy(phantom)[None, :], noise_factor=.09).squeeze(1).numpy()
