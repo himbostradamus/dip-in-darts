@@ -4,8 +4,8 @@ import torch
 torch.cuda.empty_cache()
 
 search_space = {
-    'lr': {'_type': 'uniform', '_value': [0.01, 0.15]},
-    'buffer_sise': {'_type': 'choice', '_value': [300, 400, 500, 600, 700, 800, 900]},
+    'learning_rate': {'_type': 'uniform', '_value': [0.01, 0.15]},
+    'buffer_size': {'_type': 'choice', '_value': [300, 400, 500, 600, 700, 800, 900]},
     'patience': {'_type': 'choice', '_value': [50, 100, 150, 200, 250, 300]},
     'weight_decay': {'_type': 'loguniform', '_value': [5e-8, 1e-6]},
 }

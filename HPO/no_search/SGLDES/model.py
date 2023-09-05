@@ -17,9 +17,10 @@ dtype = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTens
 print('CUDA available: {}'.format(torch.cuda.is_available()))
 
 params = {
-    'lr': 0.14,
+    'learning_rate': 0.14,
     'buffer_size': 700,
     'patience': 200,
+    'weight_decay': 1.5e-7,
 }
 
 optimized_params = nni.get_next_parameter()
@@ -28,7 +29,7 @@ print(params)
 
 # INPUTS
 total_iterations = 1400
-show_every = 200
+show_every = 10
 resolution = 64
 noise_level = '0.09'
 noise_type = 'gaussian'
@@ -43,7 +44,8 @@ print(f'Experiment Configuration:')
 print(f'\tTotal Iterations: {total_iterations}')
 print(f'\tPatience: {params["patience"]}')
 print(f'\tBuffer Size: {params["buffer_size"]}')
-print(f'\tLearning Rate: {params["lr"]}')
+print(f'\tLearning Rate: {params["learning_rate"]}')
+print(f'\tWeight Decay: {params["weight_decay"]}')
 print(f'\tImage Resolution: {resolution}')
 
 print(f'\tPlotting every {show_every} iterations')
@@ -53,11 +55,14 @@ print(f"----------------------------------\n\n")
 module = Eval_SGLD_ES(
                 phantom=phantom, 
                 phantom_noisy=phantom_noisy,
-                lr=params['lr'], 
-                model=model, # model defaults to U-net 
-                show_every=show_every,
+
+                learning_rate=params['learning_rate'], 
                 patience=params['patience'],
                 buffer_size=params['buffer_size'],
+                weight_decay=params['weight_decay'],
+                
+                model=model, # model defaults to U-net 
+                show_every=show_every,
                 )
 
 # Create a PyTorch Lightning trainer
