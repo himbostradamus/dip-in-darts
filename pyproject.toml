@@ -26,6 +26,7 @@ seaborn = "^0.12.2"
 scikit-image = "^0.21.0"
 typeguard = "<3"
 pandas = "1.5.2"
+hyperopt = "^0.2.7"
 
 
 [build-system]

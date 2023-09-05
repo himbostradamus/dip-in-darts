@@ -34,7 +34,6 @@ class Eval_MT(LightningModule):
                  MCMC_iter=50, 
                  show_every=200,
                  report_every=25,
-                #  model_cls=None,
                  HPO=False
                 ):
         super().__init__()
@@ -43,7 +42,6 @@ class Eval_MT(LightningModule):
         
         # network features
         self.input_depth = 1
-        # self.model_cls = model_cls
 
         # loss
         self.total_loss = 10
@@ -90,9 +88,6 @@ class Eval_MT(LightningModule):
 
     def set_model(self, model_cls):
         self.model = model_cls()
-        print("---------------------------")
-        print(f"\n\n\n\n\nModel: {self.model}\n\n\n\n\n")
-        print("---------------------------")
 
     def configure_optimizers(self) -> Optimizer:
         """
