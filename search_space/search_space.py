@@ -32,7 +32,7 @@ def depthwise_separable_conv(C_in, C_out, kernel_size=3, dilation=1, padding=1, 
 def pools():
     pool_dict = OrderedDict([
         ("MaxPool2d", nn.MaxPool2d(kernel_size=2, stride=2, padding=0)),
-        # ("AvgPool2d", nn.AvgPool2d(kernel_size=2, stride=2, padding=0)),
+        ("AvgPool2d", nn.AvgPool2d(kernel_size=2, stride=2, padding=0)),
         # ("AdaMaxPool2d", nn.AdaptiveMaxPool2d(1)),
         # ("AdaAvgPool2d", nn.AdaptiveAvgPool2d(1)),
         # ("DepthToSpace", nn.PixelShuffle(2)),
@@ -42,7 +42,7 @@ def pools():
 def upsamples():
     upsample_dict = OrderedDict([
         ("Upsample_nearest", nn.Upsample(scale_factor=2, mode='nearest')),
-        # ("Upsample_bilinear", nn.Upsample(scale_factor=2, mode='bilinear')),
+        ("Upsample_bilinear", nn.Upsample(scale_factor=2, mode='bilinear')),
 
     ])
     return upsample_dict
@@ -55,7 +55,7 @@ def convs(C_in, C_out):
         # ("conv2d_1x1_Relu", conv_2d(C_in, C_out)),
         # ("conv2d_1x1_SiLU", conv_2d(C_in, C_out, activation=nn.SiLU())),
 
-        # ("conv2d_3x3_Relu", conv_2d(C_in, C_out, kernel_size=3, padding=1)),
+        ("conv2d_3x3_Relu", conv_2d(C_in, C_out, kernel_size=3, padding=1)),
         ("conv2d_3x3_SiLU", conv_2d(C_in, C_out, kernel_size=3, padding=1, activation=nn.SiLU())),
         # ("conv2d_3x3_Relu_1dil", conv_2d(C_in, C_out, kernel_size=3, padding=2, dilation=2)),
 

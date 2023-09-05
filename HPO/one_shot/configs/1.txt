@@ -1,0 +1,8 @@
+
+params = {
+    'max_epochs': 3500,
+    'learning_rate': 0.01,
+    'buffer_size': 100,
+    'patience': 1000,
+    'weight_decay': 5e-7,
+}

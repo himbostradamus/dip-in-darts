@@ -32,7 +32,8 @@ class Eval_OS(LightningModule):
                  weight_decay = 5e-8, # this is proportionate to a 1024x1024 image
 
                  MCMC_iter=50, 
-                 show_every=20,
+                 show_every=200,
+                 report_every=25,
                  model_cls=None,
                  HPO=False
             ):
@@ -42,7 +43,7 @@ class Eval_OS(LightningModule):
 
         # iterators
         self.show_every=show_every
-        self.num_iter=20000
+        self.report_every = report_every
 
         # backtracking
         self.psrn_noisy_last=0
@@ -123,7 +124,6 @@ class Eval_OS(LightningModule):
         self.i=0
         self.sample_count=0
         self.burnin_iter=0 # burn-in iteration for SGLD
-        self.report_every = self.show_every/5
 
         # bon voyage
         print('Starting optimization with SGLD')
@@ -177,7 +177,7 @@ class Eval_OS(LightningModule):
             self.update_burnin(out_np)
         
         # plot progress
-        if self.i % self.show_every == 0:
+        if self.i % self.show_every == 0 and not self.HPO:
             self.plot_progress(out_np, psrn_gt)
 
         ##########################################
@@ -310,7 +310,7 @@ class Eval_OS(LightningModule):
         self.ax[0].set_title('Original image')
         self.ax[0].axis('off')
 
-        self.ax[1].imshow(denoised_img.transpose(1, 2, 0), interpolation = 'nearest', cmap='gray')
+        self.ax[1].imshow(denoised_img, interpolation = 'nearest', cmap='gray')
         self.ax[1].set_title(label)
         self.ax[1].axis('off')
 

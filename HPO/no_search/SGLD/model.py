@@ -75,8 +75,3 @@ train_loader = DataLoader(SingleImageDataset(phantom, num_iter=1), batch_size=1)
 
 lightning = Lightning(lightning_module=module, trainer=trainer, train_dataloaders=train_loader, val_dataloaders=None)
 lightning.fit(model)
-
-
-class test():
-    def __init__(self):
-        print('test')

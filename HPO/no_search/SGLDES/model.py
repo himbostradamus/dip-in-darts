@@ -17,10 +17,11 @@ dtype = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTens
 print('CUDA available: {}'.format(torch.cuda.is_available()))
 
 params = {
-    'learning_rate': 0.14,
+    'max_iterations': 1500,
+    'learning_rate': 0.08,
     'buffer_size': 700,
     'patience': 200,
-    'weight_decay': 1.5e-7,
+    'weight_decay': 1.5e-8,
 }
 
 optimized_params = nni.get_next_parameter()
@@ -31,8 +32,8 @@ print(params)
 total_iterations = 1400
 show_every = 10
 resolution = 64
-noise_level = '0.09'
 noise_type = 'gaussian'
+noise_level = '0.09'
 phantom = np.load(f'/home/joe/nas-for-dip/phantoms/ground_truth/{resolution}/{45}.npy')
 phantom_noisy = np.load(f'/home/joe/nas-for-dip/phantoms/{noise_type}/res_{resolution}/nl_{noise_level}/p_{45}.npy')
 
@@ -41,7 +42,7 @@ model = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet', in_chan
 print(f"\n\n----------------------------------")
 print(f'Experiment Configuration:')
 
-print(f'\tTotal Iterations: {total_iterations}')
+print(f'\tTotal Iterations: {params["max_iterations"]}')
 print(f'\tPatience: {params["patience"]}')
 print(f'\tBuffer Size: {params["buffer_size"]}')
 print(f'\tLearning Rate: {params["learning_rate"]}')
@@ -63,11 +64,12 @@ module = Eval_SGLD_ES(
                 
                 model=model, # model defaults to U-net 
                 show_every=show_every,
+                HPO=True,
                 )
 
 # Create a PyTorch Lightning trainer
 trainer = Trainer(
-            max_epochs=total_iterations,
+            max_epochs=params["max_iterations"],
             fast_dev_run=False,
             gpus=1,
             )

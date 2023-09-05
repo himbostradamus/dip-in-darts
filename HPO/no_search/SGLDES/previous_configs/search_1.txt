@@ -1,0 +1,9 @@
+search_space = {
+    'max_iterations': {'_type': 'choice', '_value': [500, 1500, 2000]},
+    'learning_rate': {'_type': 'uniform', '_value': [0.08, 0.14]},
+    'buffer_size': {'_type': 'choice', '_value': [700, 900]},
+    'patience': {'_type': 'choice', '_value': [150, 300]},
+    'weight_decay': {'_type': 'loguniform', '_value': [5e-8, 1e-7]}, # 5e-8 is the default value
+}
+
+submitted: yes (but terminated early)

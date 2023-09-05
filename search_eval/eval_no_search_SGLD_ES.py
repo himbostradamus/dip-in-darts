@@ -2,6 +2,9 @@ from nni import trace, report_intermediate_result, report_final_result
 from nni.retiarii.evaluator.pytorch import LightningModule
 from nni.retiarii.evaluator.pytorch.lightning import DataLoader
 
+
+
+
 from skimage.metrics import peak_signal_noise_ratio as compare_psnr
 
 import torch
@@ -20,7 +23,6 @@ torch.backends.cudnn.enabled = True
 torch.backends.cudnn.benchmark =True
 dtype = torch.cuda.FloatTensor
 
-
 @trace
 class Eval_SGLD_ES(LightningModule):
     def __init__(self, 
@@ -34,6 +36,7 @@ class Eval_SGLD_ES(LightningModule):
  
                  MCMC_iter=50,
                  show_every=200,
+                 report_every=25,
                  model=None, 
                  HPO=False
                 ):
@@ -58,6 +61,7 @@ class Eval_SGLD_ES(LightningModule):
         self.roll_back = True # to prevent numerical issues
         self.weight_decay = weight_decay
         self.show_every =  show_every
+        self.report_every = report_every
 
         # SGLD
         self.sgld_mean_each = 0
@@ -117,7 +121,9 @@ class Eval_SGLD_ES(LightningModule):
         self.i = 0
         self.sample_count = 0
         self.burnin_iter = 0
-        self.report_every = self.show_every/5
+
+        # bon voyage
+        self.plot_progress()
           
     def forward(self, net_input_saved):
         if self.reg_noise_std > 0:
@@ -153,7 +159,7 @@ class Eval_SGLD_ES(LightningModule):
         out_np = out.detach().cpu().numpy()[0]
 
         # compute PSNR
-        self.psrn_gt    = compare_psnr(self.img_np, out_np)
+        self.psnr_gt = compare_psnr(self.img_np, out_np)
 
         # early burn in termination criteria
         if not self.burnin_over:
@@ -166,6 +172,7 @@ class Eval_SGLD_ES(LightningModule):
         if self.burnin_over and np.mod(self.i, self.MCMC_iter) == 0:
             self.sgld_mean += out_np
             self.sample_count += 1.
+            self.sgld_mean_psnr = compare_psnr(self.img_np, self.sgld_mean / self.sample_count)
 
         if self.burnin_over:
             self.burnin_iter+=1
@@ -178,7 +185,7 @@ class Eval_SGLD_ES(LightningModule):
                     report_intermediate_result({
                         'iteration': self.i,
                         'loss': round(self.latest_loss,5),
-                        'psnr_gt': round(self.psrn_gt,5),
+                        'psnr_gt': round(self.psnr_gt,5),
                         'psnr': round(self.sgld_mean_psnr_each,5)
                         })
         
@@ -188,7 +195,7 @@ class Eval_SGLD_ES(LightningModule):
                     report_intermediate_result({
                         'iteration': self.i,
                         'loss': round(self.latest_loss,5),
-                        'psnr_gt': round(self.psrn_gt,5),
+                        'psnr_gt': round(self.psnr_gt,5),
                         'var': round(self.cur_var,5)
                         })
 
@@ -198,7 +205,7 @@ class Eval_SGLD_ES(LightningModule):
                     report_intermediate_result({
                         'iteration': self.i,
                         'loss': round(self.latest_loss,5),
-                        'psnr_gt': round(self.psrn_gt,5)
+                        'psnr_gt': round(self.psnr_gt,5)
                         })
 
         self.i += 1
@@ -224,7 +231,7 @@ class Eval_SGLD_ES(LightningModule):
         loss = self.closure()
 
         if self.HPO and self.i % self.report_every == 0:
-            report_intermediate_result(round(self.psrn_gt,5))
+            report_intermediate_result(round(self.psnr_gt,5))
             
         return {"loss": loss}
 
@@ -236,8 +243,11 @@ class Eval_SGLD_ES(LightningModule):
         if isinstance(optimizer, torch.optim.Adam):
             self.add_noise(self.model)
 
-        if self.i % self.show_every == 0:
+        if self.i % self.show_every == 0 and not self.HPO:
             self.plot_progress()
+        if self.HPO and self.burnin_over and self.i % self.show_every == 0 and self.sample_count != 0:
+            self.sgld_mean / self.sample_count
+            report_intermediate_result(round(self.sgld_mean_psnr,5))
 
     def on_train_end(self, **kwargs: Any):
         """

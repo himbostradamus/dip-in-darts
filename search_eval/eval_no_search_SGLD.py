@@ -28,12 +28,15 @@ class Eval_SGLD(LightningModule):
     def __init__(self, 
                  phantom=None, 
                  phantom_noisy=None,
+
                  lr=0.01,
-                 reg_noise_std_val=1./30., 
                  burnin_iter=1800, 
+                 weight_decay=5e-8,
+
                  MCMC_iter=50,
-                 model=None, 
+                 reg_noise_std_val=1./30., 
                  show_every=200,
+                 model=None, 
                  HPO=False
                 ):
         super().__init__()
@@ -56,7 +59,7 @@ class Eval_SGLD(LightningModule):
         self.learning_rate = lr
         self.roll_back = True # to prevent numerical issues
         self.burnin_iter = burnin_iter # burn-in iteration for SGLD
-        self.weight_decay = 5e-8
+        self.weight_decay = weight_decay
         self.show_every =  show_every
 
         # SGLD

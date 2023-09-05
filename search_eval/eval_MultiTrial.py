@@ -33,7 +33,8 @@ class Eval_MT(LightningModule):
 
                  MCMC_iter=50, 
                  show_every=200,
-                 model_cls=None,
+                 report_every=25,
+                #  model_cls=None,
                  HPO=False
                 ):
         super().__init__()
@@ -42,7 +43,7 @@ class Eval_MT(LightningModule):
         
         # network features
         self.input_depth = 1
-        self.model_cls = model_cls
+        # self.model_cls = model_cls
 
         # loss
         self.total_loss = 10
@@ -54,6 +55,7 @@ class Eval_MT(LightningModule):
         self.roll_back = True
         self.weight_decay = weight_decay
         self.show_every =  show_every
+        self.report_every = report_every
 
         # SGLD
         self.sgld_mean_each = 0
@@ -86,6 +88,12 @@ class Eval_MT(LightningModule):
         self.img_noisy_torch = torch.tensor(self.img_noisy_np, dtype=torch.float32).unsqueeze(0)
         self.net_input = get_noise(self.input_depth, 'noise', (self.img_np.shape[-2:][1], self.img_np.shape[-2:][0])).type(self.dtype).detach()
 
+    def set_model(self, model_cls):
+        self.model = model_cls()
+        print("---------------------------")
+        print(f"\n\n\n\n\nModel: {self.model}\n\n\n\n\n")
+        print("---------------------------")
+
     def configure_optimizers(self) -> Optimizer:
         """
         We are doing a manual implementation of the SGLD optimizer
@@ -95,12 +103,8 @@ class Eval_MT(LightningModule):
                 - But could it work?? :`( I couldn't figure it out
         """
         return torch.optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+        # return torch.optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
     
-    def set_model(self, model):
-        # needed for NAS but not for a standard training loop
-        if self.model_cls is not None:
-            self.model = self.model_cls
-        self.model = model
 
     def on_train_start(self):
         """
@@ -119,7 +123,6 @@ class Eval_MT(LightningModule):
         self.i = 0
         self.sample_count = 0
         self.burnin_iter = 0
-        self.report_every = self.show_every/5
           
     def forward(self, net_input_saved):
         if self.reg_noise_std > 0:
@@ -237,7 +240,7 @@ class Eval_MT(LightningModule):
         if isinstance(optimizer, torch.optim.Adam):
             self.add_noise(self.model)
 
-        if self.i % self.show_every == 0:
+        if self.i % self.show_every == 0 and not self.HPO:
             self.plot_progress()
 
     def on_train_end(self, **kwargs: Any):
