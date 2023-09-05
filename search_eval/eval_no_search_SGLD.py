@@ -9,8 +9,7 @@ from skimage.metrics import peak_signal_noise_ratio as compare_psnr
 
 import torch
 from torch.optim import Optimizer
-from torch.utils.data import Dataset
-from torch import tensor, optim
+from torch import tensor
 
 import matplotlib.pyplot as plt
 
@@ -18,23 +17,11 @@ from typing import Any
 import numpy as np
 
 from .utils.common_utils import get_noise
+from .optimizer.SingleImageDataset import SingleImageDataset
 
 torch.backends.cudnn.enabled = True
 torch.backends.cudnn.benchmark =True
 dtype = torch.cuda.FloatTensor
-
-@trace
-class SingleImageDataset(Dataset):
-    def __init__(self, image, num_iter):
-        self.image = image
-        self.num_iter = num_iter
-
-    def __len__(self):
-        return self.num_iter
-
-    def __getitem__(self, index):
-        # Always return the same image (and maybe a noise tensor or other information if necessary??)
-        return self.image
 
 @trace
 class Eval_SGLD(LightningModule):
@@ -46,11 +33,12 @@ class Eval_SGLD(LightningModule):
                  burnin_iter=1800, 
                  MCMC_iter=50,
                  model=None, 
-                 show_every=200
+                 show_every=200,
+                 HPO=False
                 ):
         super().__init__()
-        torch.autograd.set_detect_anomaly(True)
         self.automatic_optimization = True
+        self.HPO = HPO
         
         # network features
         if model is None:
@@ -108,16 +96,15 @@ class Eval_SGLD(LightningModule):
         self.net_input = self.net_input.to(self.device)
         self.img_noisy_torch = self.img_noisy_torch.to(self.device)
         self.reg_noise_std = self.reg_noise_std.to(self.device)
-        self.sample_count = 0
 
         self.net_input_saved = self.net_input.clone().to(self.device)
         self.noise = self.net_input.clone().to(self.device)
         self.i = 0
+        self.sample_count = 0
         # self.iteration_counter = 0
         self.plot_progress()
           
     def forward(self, net_input_saved):
-        torch.autograd.set_detect_anomaly(True)
         if self.reg_noise_std > 0:
             net_input = net_input_saved + (self.noise.normal_() * self.reg_noise_std)
             return self.model(net_input)
@@ -125,8 +112,8 @@ class Eval_SGLD(LightningModule):
             return self.model(net_input_saved)
         
     def closure(self):
-        torch.autograd.set_detect_anomaly(True)
         out = self.forward(self.net_input)
+
         self.total_loss = self.criteria(out, self.img_noisy_torch)
         # self.total_loss.backward()
         self.latest_loss = self.total_loss.item()
@@ -134,12 +121,13 @@ class Eval_SGLD(LightningModule):
         out_np = out.detach().cpu().numpy()[0]
 
         self.psnr_noisy = compare_psnr(self.img_noisy_np, out_np)
-
+        self.psnr_gt    = compare_psnr(self.img_np, out_np)
         self.log("psrn_noisy", self.psnr_noisy)
 
         if self.i > self.burnin_iter and np.mod(self.i, self.MCMC_iter) == 0:
             self.sgld_mean += out_np
             self.sample_count += 1.
+            self.sgld_mean_psnr = compare_psnr(self.img_np, self.sgld_mean / self.sample_count)
 
         if self.i > self.burnin_iter:
             self.sgld_mean_each += out_np
@@ -147,21 +135,22 @@ class Eval_SGLD(LightningModule):
             self.sgld_mean_psnr_each = compare_psnr(self.img_np, sgld_mean_tmp)
             self.sgld_psnr_mean_list.append(self.sgld_mean_psnr_each) # record the PSNR of avg after burn-in
 
-        if self.i % 10 == 0 and self.i > self.burnin_iter:
-            report_intermediate_result({
-                'iteration': self.i ,
-                'loss': round(self.latest_loss,5), 
-                'sample count': self.i - self.burnin_iter, 
-                'psnr_sgld_last': round(self.sgld_psnr_mean_list[-1],5),
-                'psnr_gt': round(compare_psnr(self.img_np, out_np),5)
-                })
-        elif self.i % 10 == 0:
-            report_intermediate_result({
-                'iteration': self.i ,
-                'loss': round(self.latest_loss,5),
-                'psnr_noisy': round(self.psnr_noisy,5),
-                'psnr_gt': round(compare_psnr(self.img_np, out_np),5)
-                })
+        if not self.HPO:
+            if self.i % 10 == 0 and self.i > self.burnin_iter:
+                report_intermediate_result({
+                    'iteration': self.i ,
+                    'loss': round(self.latest_loss,5), 
+                    'sample count': self.i - self.burnin_iter, 
+                    'psnr_sgld_last': round(self.sgld_psnr_mean_list[-1],5),
+                    'psnr_gt': round(self.psnr_gt,5)
+                    })
+            elif self.i % 10 == 0:
+                report_intermediate_result({
+                    'iteration': self.i ,
+                    'loss': round(self.latest_loss,5),
+                    'psnr_noisy': round(self.psnr_noisy,5),
+                    'psnr_gt': round(self.psnr_gt,5)
+                    })
 
         self.i += 1 # this may cause a problem with two iterations per batch
 
@@ -188,6 +177,12 @@ class Eval_SGLD(LightningModule):
         # optimizer.zero_grad()
         loss = self.closure()
         # optimizer.step()
+
+        if self.HPO and self.i < self.burnin_iter and self.i % self.show_every == 0:
+            report_intermediate_result(round(self.psnr_gt,5))
+        if self.HPO and self.i > self.burnin_iter and self.i % self.show_every == 0 and self.sample_count > 0:
+            report_intermediate_result(round(self.sgld_mean_psnr,5))
+
         return {"loss": loss}
 
     def on_train_batch_end(self, outputs, batch, batch_idx, *args, **kwargs):
@@ -205,14 +200,17 @@ class Eval_SGLD(LightningModule):
         """
         Report final metrics and display the results
         """
-        # final log
-        report_final_result({'loss': self.latest_loss})
-
-        # # plot images to see results
-        self.plot_progress()
-        final_sgld_mean = self.sgld_mean / self.sample_count
-        final_sgld_mean_psnr = compare_psnr(self.img_np, final_sgld_mean)
-        print(f"Final SGLD mean PSNR: {final_sgld_mean_psnr}")
+        if not self.HPO:
+            report_final_result({'loss': self.latest_loss})        
+            # # plot images to see results
+            self.plot_progress()
+            final_sgld_mean = self.sgld_mean / self.sample_count
+            final_sgld_mean_psnr = compare_psnr(self.img_np, final_sgld_mean)
+            print(f"Final SGLD mean PSNR: {final_sgld_mean_psnr}")
+        if self.HPO and self.sample_count > 0:
+            report_final_result(round(self.sgld_mean_psnr,5))
+        if self.HPO and self.sample_count == 0:
+            report_final_result(round(self.psnr_gt,5))
 
     def common_dataloader(self):
         # dataset = SingleImageDataset(self.phantom, self.num_iter)

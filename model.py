@@ -15,7 +15,8 @@ dtype = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTens
 print('CUDA available: {}'.format(torch.cuda.is_available()))
 
 params = {
-    'lr': 0.001,
+    'max_iter': 1000,
+    'lr': 0.1,
     'burnin_iter': 700,
 
 }
@@ -25,13 +26,12 @@ params.update(optimized_params)
 print(params)
 
 # INPUTS
-total_iterations = 1400
-show_every = 200
+show_every = 10
 resolution = 64
+noise_type = 'gaussian'
+noise_level = '0.09'
 phantom =       np.load(f'phantoms/ground_truth/{resolution}/{45}.npy')
-phantom_noisy = np.load(f'phantoms/gaussian/res_{resolution}/nl_0.09/p_{45}.npy')
-
-
+phantom_noisy = np.load(f'phantoms/{noise_type}/res_{resolution}/nl_{noise_level}/p_{45}.npy')
 
 model = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet', in_channels=1, out_channels=1, init_features=64, pretrained=False)
 phantom_noisy = add_gaussian_noise(torch.from_numpy(phantom)[None, :], noise_factor=.09).squeeze(1).numpy()
@@ -39,7 +39,7 @@ phantom_noisy = add_gaussian_noise(torch.from_numpy(phantom)[None, :], noise_fac
 print(f"\n\n----------------------------------")
 print(f'Experiment Configuration:')
 
-print(f'\tTotal Iterations: {total_iterations}')
+print(f'\tTotal Iterations: {params["max_iter"]}')
 print(f'\tBurnin Iterations: {params["burnin_iter"]}')
 print(f'\tLearning Rate: {params["lr"]}')
 print(f'\tImage Resolution: {resolution}')
@@ -55,13 +55,14 @@ module = Eval_SGLD(
                 lr=params['lr'], 
                 burnin_iter=params['burnin_iter'],
                 model=model, # model defaults to U-net 
-                show_every=show_every
-                
+                show_every=show_every,
+                HPO=True
+
                 )
 
 # Create a PyTorch Lightning trainer
 trainer = Trainer(
-            max_epochs=total_iterations,
+            max_epochs=params['max_iter'],
             fast_dev_run=False,
             gpus=1,
             )

@@ -5,9 +5,11 @@ from nni.retiarii.evaluator.pytorch.lightning import DataLoader
 import numpy as np
 import torch
 
-from ....search_eval.utils.common_utils import *
-from ....search_eval.eval_no_search_SGLD_ES import Eval_SGLD_ES, SingleImageDataset
-from ....phantoms.noises import add_gaussian_noise
+# import sys to import from different directory
+import sys
+sys.path.insert(1, '/home/joe/nas-for-dip/')
+from search_eval.utils.common_utils import *
+from search_eval.eval_no_search_SGLD_ES import Eval_SGLD_ES, SingleImageDataset
 
 # make sure cuda is available and ready to go
 torch.cuda.empty_cache()
@@ -28,10 +30,12 @@ print(params)
 total_iterations = 1400
 show_every = 200
 resolution = 64
-phantom = np.load(f'phantoms/ground_truth/{resolution}/{45}.npy')
+noise_level = '0.09'
+noise_type = 'gaussian'
+phantom = np.load(f'/home/joe/nas-for-dip/phantoms/ground_truth/{resolution}/{45}.npy')
+phantom_noisy = np.load(f'/home/joe/nas-for-dip/phantoms/{noise_type}/res_{resolution}/nl_{noise_level}/p_{45}.npy')
 
 model = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet', in_channels=1, out_channels=1, init_features=64, pretrained=False)
-phantom_noisy = add_gaussian_noise(torch.from_numpy(phantom)[None, :], noise_factor=.09).squeeze(1).numpy()
 
 print(f"\n\n----------------------------------")
 print(f'Experiment Configuration:')

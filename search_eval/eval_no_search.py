@@ -8,8 +8,6 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from skimage.metrics import peak_signal_noise_ratio as compare_psnr
 
 import torch
-from torch.optim import Optimizer
-from torch.utils.data import Dataset
 from torch import tensor
 
 import matplotlib.pyplot as plt
@@ -18,24 +16,12 @@ from typing import Any
 import numpy as np
 
 from .utils.common_utils import get_noise
-from .optimizers.sgld import SGLD
+from .optimizer.SGLD import SGLD
+from optimizer.SingleImageDataset import SingleImageDataset
 
 torch.backends.cudnn.enabled = True
 torch.backends.cudnn.benchmark =True
 dtype = torch.cuda.FloatTensor
-
-@trace
-class SingleImageDataset(Dataset):
-    def __init__(self, image, num_iter):
-        self.image = image
-        self.num_iter = num_iter
-
-    def __len__(self):
-        return self.num_iter
-
-    def __getitem__(self, index):
-        # Always return the same image (and maybe a noise tensor or other information if necessary??)
-        return self.image
 
 @trace
 class LightningEvalSearchSGLD(LightningModule):
@@ -70,6 +56,7 @@ class LightningEvalSearchSGLD(LightningModule):
         self.burnin_iter = burnin_iter # burn-in iteration for SGLD
         self.weight_decay = 5e-8
         self.show_every =  show_every
+        self.report_every = self.show_every / 5
 
         # SGLD
         self.sgld_mean_each = 0
@@ -95,7 +82,6 @@ class LightningEvalSearchSGLD(LightningModule):
         1 Parameter Group
         """
         print('Starting optimization with SGLD')
-        #optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
         optimizer = SGLD(
                         self.model.parameters(), 
                         lr=self.learning_rate, 
@@ -130,7 +116,6 @@ class LightningEvalSearchSGLD(LightningModule):
     def closure(self, r_img_torch):
         out = r_img_torch
         self.total_loss = self.criteria(out, self.img_noisy_torch)
-        # self.total_loss.backward()
         self.latest_loss = self.total_loss.item()
         self.log('loss', self.latest_loss)
         out_np = out.detach().cpu().numpy()[0]
@@ -150,13 +135,13 @@ class LightningEvalSearchSGLD(LightningModule):
             self.sgld_mean_psnr_each = compare_psnr(self.img_np, sgld_mean_tmp)
             self.sgld_psnr_mean_list.append(self.sgld_mean_psnr_each) # record the PSNR of avg after burn-in
 
-        if self.iteration_counter % 10 == 0 and self.i > self.burnin_iter:
+        if self.iteration_counter % self.report_every == 0 and self.i > self.burnin_iter:
             report_intermediate_result({
                 'iteration': self.iteration_counter ,
                 'loss': self.latest_loss, 
                 'sample count': self.i - self.burnin_iter, 
                 'psnr_sgld_last': self.sgld_psnr_mean_list[-1]})
-        elif self.iteration_counter % 10 == 0:
+        elif self.iteration_counter % self.report_every == 0:
             report_intermediate_result({
                 'iteration': self.iteration_counter ,
                 'loss': round(self.latest_loss,5),

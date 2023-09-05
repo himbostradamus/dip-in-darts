@@ -2,15 +2,11 @@ from nni import trace, report_intermediate_result, report_final_result
 from nni.retiarii.evaluator.pytorch import LightningModule
 from nni.retiarii.evaluator.pytorch.lightning import DataLoader
 
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint
-
 from skimage.metrics import peak_signal_noise_ratio as compare_psnr
 
 import torch
 from torch.optim import Optimizer
-from torch.utils.data import Dataset
-from torch import tensor, optim
+from torch import tensor
 
 import matplotlib.pyplot as plt
 
@@ -18,43 +14,30 @@ from typing import Any
 import numpy as np
 
 from .utils.common_utils import get_noise
+from .optimizer.SingleImageDataset import SingleImageDataset
 
 torch.backends.cudnn.enabled = True
 torch.backends.cudnn.benchmark =True
 dtype = torch.cuda.FloatTensor
 
-@trace
-class SingleImageDataset(Dataset):
-    """
-    Dataset that always returns the same image
-    """
-    def __init__(self, image, num_iter):
-        self.image = image
-        self.num_iter = num_iter
-
-    def __len__(self):
-        return self.num_iter
-
-    def __getitem__(self, index):
-        # Always return the same image (and maybe a noise tensor or other information if necessary??)
-        return self.image
 
 @trace
 class Eval_SGLD_ES(LightningModule):
     def __init__(self, 
                  phantom=None, 
                  phantom_noisy=None,
-                 lr=0.01,
-                 reg_noise_std_val=1./30., 
-                 MCMC_iter=50,
-                 model=None, 
-                 show_every=200,
+
+                 learning_rate=0.01,
                  buffer_size=100,
                  patience=1000,
+                 weight_decay=5e-8,
+ 
+                 MCMC_iter=50,
+                 show_every=200,
+                 model=None, 
                  HPO=False
                 ):
         super().__init__()
-        torch.autograd.set_detect_anomaly(True)
         self.automatic_optimization = True
         self.HPO = HPO
         
@@ -70,10 +53,10 @@ class Eval_SGLD_ES(LightningModule):
         self.criteria = torch.nn.MSELoss().type(dtype)
 
         # "Early Stopper" Trigger
-        self.reg_noise_std = tensor(reg_noise_std_val)
-        self.learning_rate = lr
+        self.reg_noise_std = tensor(1./30.)
+        self.learning_rate = learning_rate
         self.roll_back = True # to prevent numerical issues
-        self.weight_decay = 5e-8
+        self.weight_decay = weight_decay
         self.show_every =  show_every
 
         # SGLD
@@ -121,6 +104,7 @@ class Eval_SGLD_ES(LightningModule):
         """
         Move all tensors to the GPU to begin training
         """
+        # move all tensors to the GPU
         self.model.to(self.device)
         self.net_input = self.net_input.to(self.device)
         self.img_noisy_torch = self.img_noisy_torch.to(self.device)
@@ -128,13 +112,14 @@ class Eval_SGLD_ES(LightningModule):
 
         self.net_input_saved = self.net_input.clone().to(self.device)
         self.noise = self.net_input.clone().to(self.device)
+
+        # initialize iterators
         self.i = 0
         self.sample_count = 0
         self.burnin_iter = 0
         self.report_every = self.show_every/5
           
     def forward(self, net_input_saved):
-        torch.autograd.set_detect_anomaly(True)
         if self.reg_noise_std > 0:
             net_input = net_input_saved + (self.noise.normal_() * self.reg_noise_std)
             return self.model(net_input)
@@ -158,36 +143,17 @@ class Eval_SGLD_ES(LightningModule):
             self.cur_var = np.mean(variance)
             self.variance_history.append(self.cur_var)
             self.check_stop(self.cur_var, self.i)
-    
-    def backtracking(self, psrn_noisy, total_loss):
-        """
-        Componenet of closure function
-        backtracking to prevent oscillation if the PSNR is fluctuating
-        """
-        if self.roll_back and self.i % self.show_every:
-            if psrn_noisy - self.psrn_noisy_last < -5: 
-                print('Falling back to previous checkpoint.')
-                for new_param, net_param in zip(self.last_net, self.model.parameters()):
-                    net_param.detach().copy_(new_param.cuda())
-                return total_loss*0
-            else:
-                self.last_net = [x.detach().cpu() for x in self.model.parameters()]
-                self.psrn_noisy_last = psrn_noisy
 
     def closure(self):
-        torch.autograd.set_detect_anomaly(True)
         out = self.forward(self.net_input)
 
         # compute loss
         self.total_loss = self.criteria(out, self.img_noisy_torch)
         self.latest_loss = self.total_loss.item()
-        #total_loss.backward() ### not for NAS
-        # total_loss.backward(retain_graph=True) # retain_graph=True is for NAS to work
         out_np = out.detach().cpu().numpy()[0]
 
         # compute PSNR
-        psrn_noisy = compare_psnr(self.img_noisy_np, out.detach().cpu().numpy()[0])
-        psrn_gt    = compare_psnr(self.img_np, out_np)
+        self.psrn_gt    = compare_psnr(self.img_np, out_np)
 
         # early burn in termination criteria
         if not self.burnin_over:
@@ -208,46 +174,31 @@ class Eval_SGLD_ES(LightningModule):
             self.sgld_mean_psnr_each = compare_psnr(self.img_np, self.sgld_mean_tmp)
 
             if self.i % self.report_every == 0:
-                # print('Iter: %d; psnr_gt %.2f; psnr_sgld %.2f' % (self.i, psrn_gt, self.sgld_mean_psnr_each))
-                if self.HPO:
-                    report_intermediate_result({
-                        'psnr_gt': round(psrn_gt,5),
-                        })
-                else:
+                if not self.HPO:
                     report_intermediate_result({
                         'iteration': self.i,
                         'loss': round(self.latest_loss,5),
-                        'psnr_gt': round(psrn_gt,5),
+                        'psnr_gt': round(self.psrn_gt,5),
                         'psnr': round(self.sgld_mean_psnr_each,5)
                         })
-
+        
         elif self.cur_var is not None and not self.burnin_over:
             if self.i % self.report_every == 0:
-                # print('Iter: %d; psnr_gt %.2f; loss %.5f; var %.8f' % (self.i, psrn_gt, total_loss, self.cur_var))
-                if self.HPO:
-                    report_intermediate_result({
-                        'psnr_gt': round(psrn_gt,5),
-                        })
-                else:
+                if not self.HPO:
                     report_intermediate_result({
                         'iteration': self.i,
                         'loss': round(self.latest_loss,5),
-                        'psnr_gt': round(psrn_gt,5),
+                        'psnr_gt': round(self.psrn_gt,5),
                         'var': round(self.cur_var,5)
                         })
 
         else:
             if self.i % self.report_every == 0:
-                # print('Iter: %d; psnr_gt %.2f; loss %.5f' % (self.i, psrn_gt, total_loss))
-                if self.HPO:
-                    report_intermediate_result({
-                        'psnr_gt': round(psrn_gt,5),
-                        })
-                else:
+                if not self.HPO:
                     report_intermediate_result({
                         'iteration': self.i,
                         'loss': round(self.latest_loss,5),
-                        'psnr_gt': round(psrn_gt,5)
+                        'psnr_gt': round(self.psrn_gt,5)
                         })
 
         self.i += 1
@@ -270,10 +221,11 @@ class Eval_SGLD_ES(LightningModule):
         ---> Straight to error city calling this add_noise in the training step
         ---> Consider using the on_train_batch_end hook? (each batch is only one iteration)
         """
-        # optimizer = self.optimizers()
-        # optimizer.zero_grad()
         loss = self.closure()
-        # optimizer.step()
+
+        if self.HPO and self.i % self.report_every == 0:
+            report_intermediate_result(round(self.psrn_gt,5))
+            
         return {"loss": loss}
 
     def on_train_batch_end(self, outputs, batch, batch_idx, *args, **kwargs):
@@ -291,15 +243,16 @@ class Eval_SGLD_ES(LightningModule):
         """
         Report final metrics and display the results
         """
-        # final log
-        report_final_result({'loss': self.latest_loss})
-
-        # # plot images to see results
-        self.plot_progress()
-        final_sgld_mean = self.sgld_mean / self.sample_count
-        final_sgld_mean_psnr = compare_psnr(self.img_np, final_sgld_mean)
-        print(f"Final SGLD mean PSNR: {final_sgld_mean_psnr}")
-        report_final_result({'psnr_gt': final_sgld_mean_psnr})
+        if not self.HPO:
+            self.plot_progress()
+            final_sgld_mean = self.sgld_mean / self.sample_count
+            final_sgld_mean_psnr = compare_psnr(self.img_np, final_sgld_mean)
+            print(f"Final SGLD mean PSNR: {round(final_sgld_mean_psnr,5)}")
+            report_final_result(final_sgld_mean_psnr)
+        if self.HPO and self.sample_count != 0:
+            report_final_result(round(self.sgld_mean_psnr,5))
+        if self.HPO and self.sample_count == 0:
+            report_final_result(round(self.psnr_gt,5))
 
     def common_dataloader(self):
         # dataset = SingleImageDataset(self.phantom, self.num_iter)
@@ -364,10 +317,6 @@ class Eval_SGLD_ES(LightningModule):
             label = "SGLD Mean"
 
         _, self.ax = plt.subplots(1, 3, figsize=(10, 5))
-        
-        #self.ax[0].clear()
-        #self.ax[1].clear()
-        #self.ax[2].clear()
 
         self.ax[0].imshow(self.img_np.squeeze(), cmap='gray')
         self.ax[0].set_title("Original Image")
@@ -380,8 +329,6 @@ class Eval_SGLD_ES(LightningModule):
         self.ax[2].imshow(self.img_noisy_torch.detach().cpu().squeeze().numpy(), cmap='gray')
         self.ax[2].set_title("Noisy Image")
         self.ax[2].axis('off')
-
-        #clear_output(wait=True)
 
         plt.tight_layout()
         plt.show()
