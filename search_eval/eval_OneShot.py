@@ -9,8 +9,8 @@ from skimage.metrics import peak_signal_noise_ratio as compare_psnr
 
 import torch
 from torch.optim import Optimizer
-import torch.optim
 from torch import tensor
+
 from typing import Any
 
 from .utils.common_utils import get_noise
@@ -23,60 +23,50 @@ dtype = torch.cuda.FloatTensor
 @trace
 class Eval_OS(LightningModule):
     def __init__(self, 
-                 phantom,
-                 phantom_noisy,
+                 phantom=None,
+                 phantom_noisy=None,
                  
-                 learning_rate = 0.01,
-                 patience = 1000,
-                 buffer_size = 100,
-                 weight_decay = 5e-8, # this is proportionate to a 1024x1024 image
+                 learning_rate=0.01,
+                 buffer_size=100,
+                 patience=1000,
+                 weight_decay = 5e-8,
 
                  MCMC_iter=50, 
                  show_every=200,
                  report_every=25,
                  model_cls=None,
                  HPO=False
-            ):
+                ):
         super().__init__()
         self.automatic_optimization = True
         self.HPO = HPO
 
-        # iterators
-        self.show_every=show_every
-        self.report_every = report_every
-
-        # backtracking
-        self.psrn_noisy_last=0
-        self.last_net = None
-        self.roll_back = True # To solve the oscillation of model training 
-
-        # SGLD Output Accumulation
-        self.sgld_mean=0
-        self.sgld_mean_each=0
-        self.sgld_psnr_list = [] # psnr between sgld out and gt
-        self.MCMC_iter=MCMC_iter
-        self.param_noise_sigma=2
-
-        # tinker with image input
-        self.img_np = phantom           
-        self.img_noisy_np = phantom_noisy
-        self.img_noisy_torch = torch.tensor(self.img_noisy_np, dtype=torch.float32).unsqueeze(0)
-        
         # network input
         self.input_depth = 1
+
+
         self.model_cls = model_cls
 
-        self.net_input = get_noise(self.input_depth, 'noise', (self.img_np.shape[-2:][1], self.img_np.shape[-2:][0])).type(self.dtype).detach()
-        self.net_input_saved = self.net_input.detach().clone()
-        self.noise = self.net_input.detach().clone()
-        
-        # closure
-        self.reg_noise_std = tensor(1./30.)
-        self.criteria = torch.nn.MSELoss().type(self.dtype) # loss
 
-        # optimizer
+        # loss
+        self.criteria = torch.nn.MSELoss().type(dtype)
+
+        # "Early Stopper" Trigger
+        self.reg_noise_std = tensor(1./30.)
         self.learning_rate = learning_rate
+        self.roll_back = True
         self.weight_decay = weight_decay
+        self.show_every =  show_every
+        self.report_every = report_every
+
+        # SGLD
+        self.sgld_mean_each = 0
+        self.sgld_psnr_mean_list = []
+        self.MCMC_iter = MCMC_iter
+        self.sgld_mean = 0
+        self.last_net = None
+        self.psnr_noisy_last = 0
+        self.param_noise_sigma = 2
         
         # burnin-end criteria
         self.img_collection = []
@@ -89,6 +79,16 @@ class Eval_OS(LightningModule):
         self.burnin_over = False
         self.buffer_size = buffer_size
         self.cur_var = None
+
+        # image and noise
+        # move to float 32 instead of float 64
+
+        self.phantom = np.float32(phantom)
+        self.img_np = np.float32(phantom)
+        self.img_noisy_np = np.float32(phantom_noisy)
+
+        self.img_noisy_torch = torch.tensor(self.img_noisy_np, dtype=torch.float32).unsqueeze(0)
+        self.net_input = get_noise(self.input_depth, 'noise', (self.img_np.shape[-2:][1], self.img_np.shape[-2:][0])).type(self.dtype).detach()
 
     def configure_optimizers(self) -> Optimizer:
         """
@@ -104,6 +104,9 @@ class Eval_OS(LightningModule):
         if self.model_cls is not None:
             self.model = self.model_cls
         self.model = model
+
+    # def set_model(self, model_cls):
+    #     self.model = model_cls()
 
     def on_train_start(self) -> None:
         """
@@ -126,13 +129,9 @@ class Eval_OS(LightningModule):
         self.burnin_iter=0 # burn-in iteration for SGLD
 
         # bon voyage
-        print('Starting optimization with SGLD')
+        self.plot_progress()
 
     def forward(self, net_input_saved):
-        """
-        Forward pass of the model
-        occurs in the closure function in this implementation
-        """
         if self.reg_noise_std > 0:
             self.net_input = self.net_input_saved + (self.noise.normal_() * self.reg_noise_std)
             return self.model(self.net_input)
@@ -158,55 +157,66 @@ class Eval_OS(LightningModule):
             self.check_stop(self.cur_var, self.i)
 
     def closure(self):
-        torch.autograd.set_detect_anomaly(True)
         out = self.forward(self.net_input)
 
         # compute loss
-        total_loss = self.criteria(out, self.img_noisy_torch)
-        #total_loss.backward() ### not for NAS
-        total_loss.backward(retain_graph=True) # retain_graph=True is for NAS to work
+        self.total_loss = self.criteria(out, self.img_noisy_torch)
+        self.latest_loss = self.total_loss.item()
         out_np = out.detach().cpu().numpy()[0]
+        rescaled_out_np = out_np # (out_np - np.min(out_np)) / (np.max(out_np) - np.min(out_np))
 
         # compute PSNR
-        psrn_noisy = compare_psnr(self.img_noisy_np, out.detach().cpu().numpy()[0])
-        psrn_gt    = compare_psnr(self.img_np, out_np)
-        self.sgld_psnr_list.append(psrn_gt)
+        self.psnr_gt = compare_psnr(self.img_np, rescaled_out_np)
 
         # early burn in termination criteria
         if not self.burnin_over:
             self.update_burnin(out_np)
-        
-        # plot progress
-        if self.i % self.show_every == 0 and not self.HPO:
-            self.plot_progress(out_np, psrn_gt)
 
         ##########################################
         ### Logging and SGLD mean collection #####
         ##########################################
         
         if self.burnin_over and np.mod(self.i, self.MCMC_iter) == 0:
-            self.sgld_mean += out_np
+            self.sgld_mean += rescaled_out_np
             self.sample_count += 1.
+            self.sgld_mean_psnr = compare_psnr(self.img_np, self.sgld_mean / self.sample_count)
 
         if self.burnin_over:
             self.burnin_iter+=1
-            self.sgld_mean_each += out_np
+            self.sgld_mean_each += rescaled_out_np
             self.sgld_mean_tmp = self.sgld_mean_each / self.burnin_iter
             self.sgld_mean_psnr_each = compare_psnr(self.img_np, self.sgld_mean_tmp)
 
             if self.i % self.report_every == 0:
-                print('Iter: %d; psnr_gt %.2f; psnr_sgld %.2f' % (self.i, psrn_gt, self.sgld_mean_psnr_each))
-
+                if not self.HPO:
+                    report_intermediate_result({
+                        'iteration': self.i,
+                        'loss': round(self.latest_loss,5),
+                        'psnr_gt': round(self.psnr_gt,5),
+                        'psnr': round(self.sgld_mean_psnr_each,5)
+                        })
+        
         elif self.cur_var is not None and not self.burnin_over:
             if self.i % self.report_every == 0:
-                print('Iter: %d; psnr_gt %.2f; loss %.5f; var %.8f' % (self.i, psrn_gt, total_loss, self.cur_var))
+                if not self.HPO:
+                    report_intermediate_result({
+                        'iteration': self.i,
+                        'loss': round(self.latest_loss,5),
+                        'psnr_gt': round(self.psnr_gt,5),
+                        'var': round(self.cur_var,5)
+                        })
 
         else:
             if self.i % self.report_every == 0:
-                print('Iter: %d; psnr_gt %.2f; loss %.5f' % (self.i, psrn_gt, total_loss))
-        
+                if not self.HPO:
+                    report_intermediate_result({
+                        'iteration': self.i,
+                        'loss': round(self.latest_loss,5),
+                        'psnr_gt': round(self.psnr_gt,5)
+                        })
+
         self.i += 1
-        return total_loss
+        return self.total_loss
 
     def add_noise(self, net):
         """
@@ -215,6 +225,7 @@ class Eval_OS(LightningModule):
         """
         for n in [x for x in net.parameters() if len(x.size()) == 4]:
             noise = torch.randn(n.size())*self.param_noise_sigma*self.learning_rate
+            #noise = noise.type(self.dtype)
             noise = noise.type(self.dtype).to(self.device)
             n.data = n.data + noise
 
@@ -222,30 +233,43 @@ class Eval_OS(LightningModule):
     def on_train_batch_start(self, batch, batch_idx):
         optimizer = self.optimizers()[0]
         optimizer.zero_grad()
-
+        
     def training_step(self, batch: Any, batch_idx: int) -> Any:
         """
         Oh the places you'll go
         """
         loss = self.closure()
-        return loss
 
-    def on_train_batch_end(self, outputs, batch, batch_idx):
+        if self.HPO and not self.burnin_over and self.i % self.report_every == 0:
+            report_intermediate_result(round(self.psnr_gt,5))
+        if self.HPO and self.burnin_over and self.i % self.report_every == 0 and self.sample_count > 0:
+            report_intermediate_result(round(self.sgld_mean_psnr,5))
+
+        return {"loss": loss}
+
+    def on_train_batch_end(self, outputs, batch, batch_idx, *args, **kwargs):
         """
         Add noise for SGLD
         """
-        self.add_noise(self.model)
+        optimizer = self.optimizers()
+        if isinstance(optimizer, torch.optim.Adam):
+            self.add_noise(self.model)
 
-    def on_train_end(self) -> None:
+        if self.i % self.show_every == 0 and not self.HPO:
+            self.plot_progress()
+
+    def on_train_end(self, **kwargs: Any):
         """
-        May all your dreams come true
+        Report final metrics and display the results
         """
         if not self.HPO:
             self.plot_progress()
-            final_sgld_mean = self.sgld_mean / self.sample_count
-            final_sgld_mean_psnr = compare_psnr(self.img_np, final_sgld_mean)
-            print(f"Final SGLD mean PSNR: {round(final_sgld_mean_psnr,5)}")
-            report_final_result(final_sgld_mean_psnr)
+            if self.sample_count != 0:
+                print(f"Final SGLD mean PSNR: {round(self.sgld_mean_psnr,5)}")
+                report_final_result(round(self.sgld_mean_psnr,5))
+            else:
+                print(f"Final PSNR: {round(self.psnr_gt,5)}")
+                report_final_result(round(self.psnr_gt,5))            
         if self.HPO and self.sample_count != 0:
             report_final_result(round(self.sgld_mean_psnr,5))
         if self.HPO and self.sample_count == 0:
@@ -258,6 +282,21 @@ class Eval_OS(LightningModule):
 
     def train_dataloader(self):
         return self.common_dataloader()
+    
+    def optimizer_zero_grad(self, epoch, batch_idx, optimizer, opt_idx):
+        # Not sure if this is the default logic in the nni.retiarii.evaluator.pytorch.LightningModule
+        # needed to modify so it can accept the opt_idx argument
+        optimizer.zero_grad()
+    
+    def configure_gradient_clipping(self, optimizer, opt_idx, gradient_clip_val, gradient_clip_algorithm):
+        # Not sure if this is the default logic in the nni.retiarii.evaluator.pytorch.LightningModule
+        # needed to modify so it can accept the opt_idx argument
+        # now need to define the clipping logic
+        self.clip_gradients(
+            optimizer,
+            gradient_clip_val=gradient_clip_val,
+            gradient_clip_algorithm=gradient_clip_algorithm
+        )
 
     def check_stop(self, current, cur_epoch):
         """
@@ -287,37 +326,29 @@ class Eval_OS(LightningModule):
 
     def MSE(self, x1, x2):
         return ((x1 - x2) ** 2).sum() / x1.size
-
-    def plot_progress(self, out_np, psrn_gt):
-        """
-        plot original image
-        plot denoised image
-        plot noisy image
-
-        everything grayscaled
-        """
+        
+    def plot_progress(self):
         if self.sample_count == 0:
             denoised_img = self.forward(self.net_input).detach().cpu().squeeze().numpy()
             label = "Denoised Image"
         else:
             denoised_img = self.sgld_mean_each / self.burnin_iter
-            # denoised_img = self.sgld_mean / self.sample_count if self.sample_count > 0 else self.sgld_mean
             denoised_img = np.squeeze(denoised_img)
             label = "SGLD Mean"
 
         _, self.ax = plt.subplots(1, 3, figsize=(10, 5))
-        self.ax[0].imshow(self.img_np.transpose(1, 2, 0), interpolation = 'nearest', cmap='gray')
-        self.ax[0].set_title('Original image')
+
+        self.ax[0].imshow(self.img_np.squeeze(), cmap='gray')
+        self.ax[0].set_title("Original Image")
         self.ax[0].axis('off')
 
-        self.ax[1].imshow(denoised_img, interpolation = 'nearest', cmap='gray')
+        self.ax[1].imshow(denoised_img, cmap='gray')
         self.ax[1].set_title(label)
         self.ax[1].axis('off')
 
-        self.ax[2].imshow(self.img_noisy_np.transpose(1, 2, 0), interpolation = 'nearest', cmap='gray')
-        self.ax[2].set_title('Noisy image')
+        self.ax[2].imshow(self.img_noisy_torch.detach().cpu().squeeze().numpy(), cmap='gray')
+        self.ax[2].set_title("Noisy Image")
         self.ax[2].axis('off')
-        
+
         plt.tight_layout()
         plt.show()
-

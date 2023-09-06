@@ -1,9 +1,9 @@
+import matplotlib.pyplot as plt
+import numpy as np
+
 from nni import trace, report_intermediate_result, report_final_result
 from nni.retiarii.evaluator.pytorch import LightningModule
 from nni.retiarii.evaluator.pytorch.lightning import DataLoader
-
-
-
 
 from skimage.metrics import peak_signal_noise_ratio as compare_psnr
 
@@ -11,10 +11,7 @@ import torch
 from torch.optim import Optimizer
 from torch import tensor
 
-import matplotlib.pyplot as plt
-
 from typing import Any
-import numpy as np
 
 from .utils.common_utils import get_noise
 from .optimizer.SingleImageDataset import SingleImageDataset
@@ -45,20 +42,19 @@ class Eval_SGLD_ES(LightningModule):
         self.HPO = HPO
         
         # network features
+        self.input_depth = 1
         if model is None:
             model = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet', in_channels=1, out_channels=1, init_features=64, pretrained=False)
         self.model_cls = model
         self.model = model
-        self.input_depth = 1
 
         # loss
-        self.total_loss = 10
         self.criteria = torch.nn.MSELoss().type(dtype)
 
         # "Early Stopper" Trigger
         self.reg_noise_std = tensor(1./30.)
         self.learning_rate = learning_rate
-        self.roll_back = True # to prevent numerical issues
+        self.roll_back = True
         self.weight_decay = weight_decay
         self.show_every =  show_every
         self.report_every = report_every
@@ -93,6 +89,9 @@ class Eval_SGLD_ES(LightningModule):
 
         self.img_noisy_torch = torch.tensor(self.img_noisy_np, dtype=torch.float32).unsqueeze(0)
         self.net_input = get_noise(self.input_depth, 'noise', (self.img_np.shape[-2:][1], self.img_np.shape[-2:][0])).type(self.dtype).detach()
+
+    def set_model(self, model_cls):
+        pass
 
     def configure_optimizers(self) -> Optimizer:
         """
@@ -225,14 +224,14 @@ class Eval_SGLD_ES(LightningModule):
     def training_step(self, batch: Any, batch_idx: int) -> Any:
         """
         Oh the places you'll go
-        ---> Straight to error city calling this add_noise in the training step
-        ---> Consider using the on_train_batch_end hook? (each batch is only one iteration)
         """
         loss = self.closure()
 
-        if self.HPO and self.i % self.report_every == 0:
+        if self.HPO and not self.burnin_over and self.i % self.report_every == 0:
             report_intermediate_result(round(self.psnr_gt,5))
-            
+        if self.HPO and self.burnin_over and self.i % self.report_every == 0 and self.sample_count > 0:
+            report_intermediate_result(round(self.sgld_mean_psnr,5))
+
         return {"loss": loss}
 
     def on_train_batch_end(self, outputs, batch, batch_idx, *args, **kwargs):
@@ -245,9 +244,6 @@ class Eval_SGLD_ES(LightningModule):
 
         if self.i % self.show_every == 0 and not self.HPO:
             self.plot_progress()
-        if self.HPO and self.burnin_over and self.i % self.show_every == 0 and self.sample_count != 0:
-            self.sgld_mean / self.sample_count
-            report_intermediate_result(round(self.sgld_mean_psnr,5))
 
     def on_train_end(self, **kwargs: Any):
         """
@@ -255,10 +251,12 @@ class Eval_SGLD_ES(LightningModule):
         """
         if not self.HPO:
             self.plot_progress()
-            final_sgld_mean = self.sgld_mean / self.sample_count
-            final_sgld_mean_psnr = compare_psnr(self.img_np, final_sgld_mean)
-            print(f"Final SGLD mean PSNR: {round(final_sgld_mean_psnr,5)}")
-            report_final_result(final_sgld_mean_psnr)
+            if self.sample_count != 0:
+                print(f"Final SGLD mean PSNR: {round(self.sgld_mean_psnr,5)}")
+                report_final_result(round(self.sgld_mean_psnr,5))
+            else:
+                print(f"Final PSNR: {round(self.psnr_gt,5)}")
+                report_final_result(round(self.psnr_gt,5))            
         if self.HPO and self.sample_count != 0:
             report_final_result(round(self.sgld_mean_psnr,5))
         if self.HPO and self.sample_count == 0:
@@ -322,7 +320,6 @@ class Eval_SGLD_ES(LightningModule):
             label = "Denoised Image"
         else:
             denoised_img = self.sgld_mean_each / self.burnin_iter
-            # denoised_img = self.sgld_mean / self.sample_count if self.sample_count > 0 else self.sgld_mean
             denoised_img = np.squeeze(denoised_img)
             label = "SGLD Mean"
 

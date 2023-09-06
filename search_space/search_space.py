@@ -52,20 +52,20 @@ def convs(C_in, C_out):
     # pd = (ks - 1) * dl // 2
     conv_dict = OrderedDict([
         
-        # ("conv2d_1x1_Relu", conv_2d(C_in, C_out)),
+        ("conv2d_1x1_Relu", conv_2d(C_in, C_out)),
         # ("conv2d_1x1_SiLU", conv_2d(C_in, C_out, activation=nn.SiLU())),
 
         ("conv2d_3x3_Relu", conv_2d(C_in, C_out, kernel_size=3, padding=1)),
         # ("conv2d_3x3_SiLU", conv_2d(C_in, C_out, kernel_size=3, padding=1, activation=nn.SiLU())),
-        ("conv2d_3x3_Sigmoid", conv_2d(C_in, C_out, kernel_size=3, padding=1, activation=nn.Sigmoid())),
+        # ("conv2d_3x3_Sigmoid", conv_2d(C_in, C_out, kernel_size=3, padding=1, activation=nn.Sigmoid())),
         # ("conv2d_3x3_Relu_1dil", conv_2d(C_in, C_out, kernel_size=3, padding=2, dilation=2)),
 
-        # ("conv2d_5x5_Relu", conv_2d(C_in, C_out, kernel_size=5, padding=2)),
+        ("conv2d_5x5_Relu", conv_2d(C_in, C_out, kernel_size=5, padding=2)),
         # ("conv2d_5x5_Relu_1dil", conv_2d(C_in, C_out, kernel_size=5, padding=4, dilation=2, activation=nn.SiLU())),
         # ("conv2d_5x5_SiLU", conv_2d(C_in, C_out, kernel_size=5, padding=2, activation=nn.SiLU())),
 
 
-        # ("convDS_1x1_Relu", depthwise_separable_conv(C_in, C_out)),
+        ("convDS_1x1_Relu", depthwise_separable_conv(C_in, C_out)),
         # ("convDS_1x1_SiLU", depthwise_separable_conv(C_in, C_out, activation=nn.SiLU())),
 
         ("convDS_3x3_Relu", depthwise_separable_conv(C_in, C_out, kernel_size=3, padding=1)),

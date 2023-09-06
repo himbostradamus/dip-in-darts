@@ -9,8 +9,8 @@ from skimage.metrics import peak_signal_noise_ratio as compare_psnr
 
 import torch
 from torch.optim import Optimizer
-
 from torch import tensor
+
 from typing import Any
 
 from .utils.common_utils import get_noise
@@ -27,13 +27,14 @@ class Eval_MT(LightningModule):
                  phantom_noisy=None,
 
                  learning_rate=0.01,
-                 patience=1000,
                  buffer_size=100,
+                 patience=1000,
                  weight_decay=5e-8,
 
                  MCMC_iter=50, 
                  show_every=200,
                  report_every=25,
+
                  HPO=False
                 ):
         super().__init__()
@@ -43,8 +44,11 @@ class Eval_MT(LightningModule):
         # network features
         self.input_depth = 1
 
+
+
+
+
         # loss
-        self.total_loss = 10
         self.criteria = torch.nn.MSELoss().type(dtype)
 
         # "Early Stopper" Trigger
@@ -98,14 +102,12 @@ class Eval_MT(LightningModule):
                 - But could it work?? :`( I couldn't figure it out
         """
         return torch.optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
-        # return torch.optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
     
-
     def on_train_start(self):
         """
         Move all tensors to the GPU to begin training
         """
-        # move to device
+        # move all tensors to the GPU
         self.model.to(self.device)
         self.net_input = self.net_input.to(self.device)
         self.img_noisy_torch = self.img_noisy_torch.to(self.device)
@@ -119,6 +121,9 @@ class Eval_MT(LightningModule):
         self.sample_count = 0
         self.burnin_iter = 0
           
+        # bon voyage
+        self.plot_progress()
+
     def forward(self, net_input_saved):
         if self.reg_noise_std > 0:
             net_input = net_input_saved + (self.noise.normal_() * self.reg_noise_std)
@@ -145,16 +150,16 @@ class Eval_MT(LightningModule):
             self.check_stop(self.cur_var, self.i)
 
     def closure(self):
-        torch.autograd.set_detect_anomaly(True)
         out = self.forward(self.net_input)
 
         # compute loss
         self.total_loss = self.criteria(out, self.img_noisy_torch)
         self.latest_loss = self.total_loss.item()
         out_np = out.detach().cpu().numpy()[0]
+        rescaled_out_np = out_np # (out_np - np.min(out_np)) / (np.max(out_np) - np.min(out_np))
 
         # compute PSNR
-        self.psrn_gt    = compare_psnr(self.img_np, out_np)
+        self.psnr_gt = compare_psnr(self.img_np, rescaled_out_np)
 
         # early burn in termination criteria
         if not self.burnin_over:
@@ -165,12 +170,13 @@ class Eval_MT(LightningModule):
         ##########################################
         
         if self.burnin_over and np.mod(self.i, self.MCMC_iter) == 0:
-            self.sgld_mean += out_np
+            self.sgld_mean += rescaled_out_np
             self.sample_count += 1.
+            self.sgld_mean_psnr = compare_psnr(self.img_np, self.sgld_mean / self.sample_count)
 
         if self.burnin_over:
             self.burnin_iter+=1
-            self.sgld_mean_each += out_np
+            self.sgld_mean_each += rescaled_out_np
             self.sgld_mean_tmp = self.sgld_mean_each / self.burnin_iter
             self.sgld_mean_psnr_each = compare_psnr(self.img_np, self.sgld_mean_tmp)
 
@@ -179,7 +185,7 @@ class Eval_MT(LightningModule):
                     report_intermediate_result({
                         'iteration': self.i,
                         'loss': round(self.latest_loss,5),
-                        'psnr_gt': round(self.psrn_gt,5),
+                        'psnr_gt': round(self.psnr_gt,5),
                         'psnr': round(self.sgld_mean_psnr_each,5)
                         })
         
@@ -189,7 +195,7 @@ class Eval_MT(LightningModule):
                     report_intermediate_result({
                         'iteration': self.i,
                         'loss': round(self.latest_loss,5),
-                        'psnr_gt': round(self.psrn_gt,5),
+                        'psnr_gt': round(self.psnr_gt,5),
                         'var': round(self.cur_var,5)
                         })
 
@@ -199,7 +205,7 @@ class Eval_MT(LightningModule):
                     report_intermediate_result({
                         'iteration': self.i,
                         'loss': round(self.latest_loss,5),
-                        'psnr_gt': round(self.psrn_gt,5)
+                        'psnr_gt': round(self.psnr_gt,5)
                         })
 
         self.i += 1
@@ -222,9 +228,11 @@ class Eval_MT(LightningModule):
         """
         loss = self.closure()
 
-        if self.HPO and self.i % self.report_every == 0:
-            report_intermediate_result(round(self.psrn_gt,5))
-            
+        if self.HPO and not self.burnin_over and self.i % self.report_every == 0:
+            report_intermediate_result(round(self.psnr_gt,5))
+        if self.HPO and self.burnin_over and self.i % self.report_every == 0 and self.sample_count > 0:
+            report_intermediate_result(round(self.sgld_mean_psnr,5))
+
         return {"loss": loss}
 
     def on_train_batch_end(self, outputs, batch, batch_idx, *args, **kwargs):
@@ -244,10 +252,12 @@ class Eval_MT(LightningModule):
         """
         if not self.HPO:
             self.plot_progress()
-            final_sgld_mean = self.sgld_mean / self.sample_count
-            final_sgld_mean_psnr = compare_psnr(self.img_np, final_sgld_mean)
-            print(f"Final SGLD mean PSNR: {round(final_sgld_mean_psnr,5)}")
-            report_final_result(final_sgld_mean_psnr)
+            if self.sample_count != 0:
+                print(f"Final SGLD mean PSNR: {round(self.sgld_mean_psnr,5)}")
+                report_final_result(round(self.sgld_mean_psnr,5))
+            else:
+                print(f"Final PSNR: {round(self.psnr_gt,5)}")
+                report_final_result(round(self.psnr_gt,5))            
         if self.HPO and self.sample_count != 0:
             report_final_result(round(self.sgld_mean_psnr,5))
         if self.HPO and self.sample_count == 0:
@@ -311,7 +321,6 @@ class Eval_MT(LightningModule):
             label = "Denoised Image"
         else:
             denoised_img = self.sgld_mean_each / self.burnin_iter
-            # denoised_img = self.sgld_mean / self.sample_count if self.sample_count > 0 else self.sgld_mean
             denoised_img = np.squeeze(denoised_img)
             label = "SGLD Mean"
 
