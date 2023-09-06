@@ -1,8 +1,3 @@
-from search_eval.eval_OneShot import Eval_OS
-from search_eval.optimizer.SingleImageDataset import SingleImageDataset
-from search_eval.utils.common_utils import *
-from search_space.search_space import DARTS_UNet
-
 import nni
 import nni.retiarii.strategy as strategy
 
@@ -16,6 +11,10 @@ import torch
 # import sys to import from different directory
 import sys
 sys.path.insert(1, '/home/joe/nas-for-dip/')
+from search_eval.eval_OneShot import Eval_OS
+from search_eval.optimizer.SingleImageDataset import SingleImageDataset
+from search_eval.utils.common_utils import *
+from search_space.search_space import DARTS_UNet
 
 torch.cuda.empty_cache()
 dtype = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
@@ -58,6 +57,7 @@ module = Eval_OS(
 
                 show_every=200,
                 report_every=25,
+                HPO=True
                 )
 # Create a PyTorch Lightning trainer
 trainer = Trainer(
@@ -85,3 +85,7 @@ model_space = DARTS_UNet(depth=4)
 config = RetiariiExeConfig(execution_engine='oneshot')
 experiment = RetiariiExperiment(model_space, evaluator=lightning, strategy=strategy)
 experiment.run(config)
+
+print(f'\n\n----------------------------------------------------------------\n')
+print(f'Top Models: {experiment.export_top_models()}')
+print(f'\n\n----------------------------------------------------------------\n')
