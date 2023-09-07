@@ -16,8 +16,7 @@ sys.path.insert(1, '/home/joe/nas-for-dip/')
 from search_eval.eval_generic import SGLDES
 from search_eval.optimizer.SingleImageDataset import SingleImageDataset
 from search_eval.utils.common_utils import *
-from search_space.search_space import DARTS_UNet
-from search_space.search_space_expanded import SearchSpace
+from search_space.search_space import SearchSpace
 
 torch.cuda.empty_cache()
 dtype = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
@@ -88,7 +87,6 @@ lightning = Lightning(lightning_module=module, trainer=trainer, train_dataloader
 
 
 # Create a Search Space
-# model_space = DARTS_UNet(depth=5)
 model_space = SearchSpace(depth=4)
 
 # fast_dev_run=False

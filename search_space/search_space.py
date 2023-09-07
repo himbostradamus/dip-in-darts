@@ -29,6 +29,14 @@ def depthwise_separable_conv(C_in, C_out, kernel_size=3, dilation=1, padding=1, 
         nn.ReLU() if activation is None else activation
     )
 
+@trace
+def transposed_conv_2d(C_in, C_out, kernel_size=4, stride=2, padding=1, activation=None):
+    return nn.Sequential(
+        nn.ConvTranspose2d(C_in, C_out, kernel_size=kernel_size, stride=stride, padding=padding, bias=False),
+        nn.BatchNorm2d(C_out),
+        nn.ReLU() if activation is None else activation
+    )
+
 def pools():
     pool_dict = OrderedDict([
         ("MaxPool2d", nn.MaxPool2d(kernel_size=2, stride=2, padding=0)),
@@ -39,11 +47,12 @@ def pools():
     ])
     return pool_dict
 
-def upsamples():
+def upsamples(C_in, C_out):
     upsample_dict = OrderedDict([
         ("Upsample_nearest", nn.Upsample(scale_factor=2, mode='nearest')),
         ("Upsample_bilinear", nn.Upsample(scale_factor=2, mode='bilinear')),
-
+        ("TransConv_4x4_Relu", transposed_conv_2d(C_in, C_out)),
+        ("TransConv_2x2_RelU", transposed_conv_2d(C_in, C_out, kernel_size=2, stride=2, padding=0)),
     ])
     return upsample_dict
 
@@ -52,7 +61,7 @@ def convs(C_in, C_out):
     # pd = (ks - 1) * dl // 2
     conv_dict = OrderedDict([
         
-        ("conv2d_1x1_Relu", conv_2d(C_in, C_out)),
+        # ("conv2d_1x1_Relu", conv_2d(C_in, C_out)),
         # ("conv2d_1x1_SiLU", conv_2d(C_in, C_out, activation=nn.SiLU())),
 
         ("conv2d_3x3_Relu", conv_2d(C_in, C_out, kernel_size=3, padding=1)),
@@ -60,12 +69,12 @@ def convs(C_in, C_out):
         ("conv2d_3x3_Sigmoid", conv_2d(C_in, C_out, kernel_size=3, padding=1, activation=nn.Sigmoid())),
         # ("conv2d_3x3_Relu_1dil", conv_2d(C_in, C_out, kernel_size=3, padding=2, dilation=2)),
 
-        ("conv2d_5x5_Relu", conv_2d(C_in, C_out, kernel_size=5, padding=2)),
+        # ("conv2d_5x5_Relu", conv_2d(C_in, C_out, kernel_size=5, padding=2)),
         # ("conv2d_5x5_Relu_1dil", conv_2d(C_in, C_out, kernel_size=5, padding=4, dilation=2, activation=nn.SiLU())),
         # ("conv2d_5x5_SiLU", conv_2d(C_in, C_out, kernel_size=5, padding=2, activation=nn.SiLU())),
 
 
-        ("convDS_1x1_Relu", depthwise_separable_conv(C_in, C_out)),
+        # ("convDS_1x1_Relu", depthwise_separable_conv(C_in, C_out)),
         # ("convDS_1x1_SiLU", depthwise_separable_conv(C_in, C_out, activation=nn.SiLU())),
 
         ("convDS_3x3_Relu", depthwise_separable_conv(C_in, C_out, kernel_size=3, padding=1)),
@@ -77,29 +86,8 @@ def convs(C_in, C_out):
     return conv_dict
 
 @trace
-class Preprocessor(nn.Module):
-    def __init__(self, C_in, C_out):
-        super().__init__()
-
-        self.conv1 = nn.Conv2d(C_in, C_out, 1)
-
-    def forward(self, x):
-        return [self.conv1(x[0])]
-
-@trace
-class Postprocessor(nn.Module):
-    def __init__(self, C_in, C_out):
-        super().__init__()
-
-        self.conv1 = nn.Conv2d(C_in, C_out, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(C_in, C_out, kernel_size=3, padding=1)
-
-    def forward(self, x):
-        return [self.conv1(x[0]), self.conv2(x[1])]
-
-@trace
 @model_wrapper
-class DARTS_UNet(nn.Module):
+class SearchSpace(nn.Module):
     def __init__(self, C_in=1, C_out=1, depth=4):
         super().__init__()
 
@@ -114,16 +102,17 @@ class DARTS_UNet(nn.Module):
         filters = 64
         self.encoders = nn.ModuleList()
         for i in range(depth):
-            self.encoders.append(Cell(pools(), num_nodes=1, num_ops_per_node=1, num_predecessors=1, label=f'pool_{i+1}'))
-            self.encoders.append(Cell(convs(filters, filters*2), num_nodes=1, num_ops_per_node=1, num_predecessors=1, label=f'conv_{i+1}'))
+            self.encoders.append(Cell(pools(), num_nodes=1, num_ops_per_node=len(pools()), num_predecessors=1, label=f'pool_{i+1}'))
+            self.encoders.append(Cell(convs(filters, filters*2), num_nodes=1, num_ops_per_node=len(convs(filters, filters*2)), num_predecessors=1, label=f'conv_{i+1}'))
             filters *= 2
 
         # Decoders
         self.decoders = nn.ModuleList()
         for i in range(depth):
-            self.decoders.append(Cell(upsamples(), num_nodes=1, num_ops_per_node=1, num_predecessors=1, label=f'upsample_{i+1}'))
+            # self.decoders.append(Cell(upsamples(), num_nodes=1, num_ops_per_node=1, num_predecessors=1, label=f'upsample_{i+1}'))
+            self.decoders.append(Cell(upsamples(filters, filters), num_nodes=1, num_ops_per_node=len(upsamples(filters, filters)), num_predecessors=1, label=f'upsample_{i+1}'))
             filters //= 2
-            self.decoders.append(Cell(convs(filters*3, filters), num_nodes=1, num_ops_per_node=1, num_predecessors=1, label=f'conv_{i+1+depth}'))
+            self.decoders.append(Cell(convs(filters*3, filters), num_nodes=1, num_ops_per_node=len(convs(filters, filters*2)), num_predecessors=1, label=f'conv_{i+1+depth}'))
 
         self.out_layer = nn.Conv2d(64, C_out, kernel_size=3, padding=1)
 

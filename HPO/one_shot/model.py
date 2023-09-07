@@ -14,8 +14,7 @@ sys.path.insert(1, '/home/joe/nas-for-dip/')
 from search_eval.eval_OneShot import Eval_OS
 from search_eval.optimizer.SingleImageDataset import SingleImageDataset
 from search_eval.utils.common_utils import *
-from search_space.search_space import DARTS_UNet
-from search_space.search_space_expanded import SearchSpace
+from search_space.search_space import SearchSpace
 
 torch.cuda.empty_cache()
 dtype = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
