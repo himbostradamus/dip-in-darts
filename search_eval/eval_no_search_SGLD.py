@@ -36,6 +36,7 @@ class Eval_SGLD(LightningModule):
                  MCMC_iter=50,
                  reg_noise_std_val=1./30., 
                  show_every=200,
+                 report_every=100,
                  model=None, 
                  HPO=False
                 ):
@@ -61,6 +62,7 @@ class Eval_SGLD(LightningModule):
         self.burnin_iter = burnin_iter # burn-in iteration for SGLD
         self.weight_decay = weight_decay
         self.show_every =  show_every
+        self.report_every = report_every
 
         # SGLD
         self.sgld_mean_each = 0
@@ -139,7 +141,7 @@ class Eval_SGLD(LightningModule):
             self.sgld_psnr_mean_list.append(self.sgld_mean_psnr_each) # record the PSNR of avg after burn-in
 
         if not self.HPO:
-            if self.i % 10 == 0 and self.i > self.burnin_iter:
+            if self.i % self.report_every == 0 and self.i > self.burnin_iter:
                 report_intermediate_result({
                     'iteration': self.i ,
                     'loss': round(self.latest_loss,5), 
@@ -147,7 +149,7 @@ class Eval_SGLD(LightningModule):
                     'psnr_sgld_last': round(self.sgld_psnr_mean_list[-1],5),
                     'psnr_gt': round(self.psnr_gt,5)
                     })
-            elif self.i % 10 == 0:
+            elif self.i % self.report_every == 0:
                 report_intermediate_result({
                     'iteration': self.i ,
                     'loss': round(self.latest_loss,5),

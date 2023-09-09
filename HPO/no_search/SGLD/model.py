@@ -9,6 +9,7 @@ import sys
 sys.path.insert(1, '/home/joe/nas-for-dip')
 from search_eval.utils.common_utils import *
 from search_eval.eval_no_search_SGLD import Eval_SGLD, SingleImageDataset
+from search_space.attention_space import DeepImagePrior
 
 # make sure cuda is available and ready to go
 torch.cuda.empty_cache()
@@ -27,7 +28,8 @@ params.update(optimized_params)
 print(params)
 
 # INPUTS
-show_every = 10
+show_every = 2000
+report_every = 250
 resolution = 64
 noise_type = 'gaussian'
 noise_level = '0.09'
@@ -35,6 +37,7 @@ phantom =       np.load(f'/home/joe/nas-for-dip/phantoms/ground_truth/{resolutio
 phantom_noisy = np.load(f'/home/joe/nas-for-dip/phantoms/{noise_type}/res_{resolution}/nl_{noise_level}/p_{45}.npy')
 
 model = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet', in_channels=1, out_channels=1, init_features=64, pretrained=False)
+model = DeepImagePrior(1,1,5)
 
 print(f"\n\n----------------------------------")
 print(f'Experiment Configuration:')
@@ -56,6 +59,7 @@ module = Eval_SGLD(
                 burnin_iter=params['burnin_iter'],
                 model=model, # model defaults to U-net 
                 show_every=show_every,
+                report_every=report_every,
                 HPO=True
 
                 )

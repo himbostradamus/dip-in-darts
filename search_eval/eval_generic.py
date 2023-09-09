@@ -57,7 +57,7 @@ class SGLDES(LightningModule):
             self.model_cls = model_cls
         
         if not NAS:
-            if model is None:
+            if model_cls is None:
                 model = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet', in_channels=1, out_channels=1, init_features=64, pretrained=False)
             self.model_cls = model
             self.model = model
@@ -231,23 +231,23 @@ class SGLDES(LightningModule):
         # compute PSNR
         self.psnr_gt = compare_psnr(self.img_np, rescaled_out_np)
 
-        # # early burn in termination criteria
-        # if not self.burnin_over and self.SGLD_regularize:
-        #     self.update_burnin(out_np)
+        # early burn in termination criteria
+        if not self.burnin_over and self.SGLD_regularize:
+            self.update_burnin(out_np)
 
-        # # SGLD mean calculation and logging
-        # if self.SGLD_regularize:
-        #     self.sgld_closure_calc(out_np)
+        # SGLD mean calculation and logging
+        if self.SGLD_regularize:
+            self.sgld_closure_calc(out_np)
 
-        # # Non SGLD mean logging
-        # elif self.i % self.report_every == 0 and not self.HPO:
-        #     report_intermediate_result({
-        #         'iteration': self.i,
-        #         'loss': round(self.latest_loss,5),
-        #         'psnr_gt': round(self.psnr_gt,5)
-        #         })
-        # elif self.i % self.report_every == 0 and self.HPO:
-        #     report_intermediate_result('psnr_gt': round(self.psnr_gt,5))
+        # Non SGLD mean logging
+        elif self.i % self.report_every == 0 and not self.HPO:
+            report_intermediate_result({
+                'iteration': self.i,
+                'loss': round(self.latest_loss,5),
+                'psnr_gt': round(self.psnr_gt,5)
+                })
+        elif self.i % self.report_every == 0 and self.HPO:
+            report_intermediate_result({'psnr_gt': round(self.psnr_gt,5)})
 
         self.i += 1
         return self.total_loss
@@ -271,8 +271,8 @@ class SGLDES(LightningModule):
         loss = self.closure()
 
 
-        if self.i % self.report_every == 0:
-            self.training_logging()
+        # if self.i % self.report_every == 0:
+        #     self.training_logging()
         return {"loss": loss}
 
 
