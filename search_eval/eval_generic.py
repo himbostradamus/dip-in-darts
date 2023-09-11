@@ -357,7 +357,7 @@ class SGLDES(LightningModule):
             self.burnin_over = self.wait_count >= self.patience
         if self.burnin_over:
             print(f'\n\nBurn-in completed at iter {self.i}; \nStarting SGLD Mean sampling;\n\n')
-            self.show_every = self.MCMC_iter
+            # self.show_every = self.MCMC_iter
 
     def update_img_collection(self, cur_img):
         self.img_collection.append(cur_img)
