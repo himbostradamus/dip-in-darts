@@ -123,7 +123,7 @@ class SGLDES(LightningModule):
             self.model = model
         
         if self.NAS and not self.OneShot:
-            self.model = model
+            self.model = model()
         
         if not self.NAS:
             pass
@@ -218,6 +218,8 @@ class SGLDES(LightningModule):
                         'loss': round(self.latest_loss,5),
                         'psnr_gt': round(self.psnr_gt,5)
                         })
+        if self.i % self.report_every == 0 and self.HPO:
+            report_intermediate_result(round(self.psnr_gt,5))
 
     def closure(self):
         out = self.forward(self.net_input)
@@ -247,32 +249,22 @@ class SGLDES(LightningModule):
                 'psnr_gt': round(self.psnr_gt,5)
                 })
         elif self.i % self.report_every == 0 and self.HPO:
-            report_intermediate_result({'psnr_gt': round(self.psnr_gt,5)})
+            report_intermediate_result(round(self.psnr_gt,5))
 
         self.i += 1
         return self.total_loss
 
     # Define hook 
     def on_train_batch_start(self, batch, batch_idx):
-        optimizer = self.optimizers()[0]
-        optimizer.zero_grad()
-    
-    def training_logging(self):
-        if self.HPO and not self.burnin_over and self.i % self.report_every == 0:
-            report_intermediate_result(round(self.psnr_gt,5))
-        if self.HPO and self.burnin_over and self.i % self.report_every == 0 and self.sample_count > 0 and self.SGLD_regularize:
-            report_intermediate_result(round(self.sgld_mean_psnr,5))
-
+        if self.NAS and self.OneShot:
+            optimizer = self.optimizers()[0]
+            optimizer.zero_grad()
 
     def training_step(self, batch: Any, batch_idx: int) -> Any:
         """
         Oh the places you'll go
         """
         loss = self.closure()
-
-
-        # if self.i % self.report_every == 0:
-        #     self.training_logging()
         return {"loss": loss}
 
 

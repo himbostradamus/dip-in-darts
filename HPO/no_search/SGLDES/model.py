@@ -9,7 +9,7 @@ import torch
 import sys
 sys.path.insert(1, '/home/joe/nas-for-dip/')
 from search_eval.utils.common_utils import *
-from search_eval.eval_no_search_SGLD_ES import Eval_SGLD_ES, SingleImageDataset
+from search_eval.eval_SGLDES import Eval_SGLD_ES, SingleImageDataset
 
 # make sure cuda is available and ready to go
 torch.cuda.empty_cache()
