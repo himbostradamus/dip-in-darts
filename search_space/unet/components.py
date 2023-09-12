@@ -1,6 +1,8 @@
 from collections import OrderedDict
 import nni.retiarii.nn.pytorch as nn
 from nni import trace
+import torch
+import torch.nn.functional as F
 
 @trace
 def conv_2d(C_in, C_out, kernel_size=3, dilation=1, padding=1, activation=None):
@@ -35,7 +37,7 @@ def transposed_conv_2d(C_in, C_out, kernel_size=4, stride=2, padding=1, activati
     )
 
 @trace
-def attention(channel, reduction=16):
+def seBlock(channel, reduction=16):
     return nn.Sequential(
         nn.Linear(channel, channel // reduction, bias=False),
         nn.ReLU(inplace=True),
@@ -43,22 +45,23 @@ def attention(channel, reduction=16):
         nn.Sigmoid()
     )
 
-    # corresponding forward function    
-    # def attention_forward(self, x, fcs):
-    #     b, c, _, _ = x.size()
-    #     y = nn.AdaptiveAvgPool2d(1)(x).view(b, c)
-    #     y = fcs(y).view(b, c, 1, 1)
-    #     return x * y.expand_as(x)
+    # corresponding forward function 
+   
+def seForward(x, fcs):
+    b, c, _, _ = x.size()
+    y = nn.AdaptiveAvgPool2d(1)(x).view(b, c)
+    y = fcs(y).view(b, c, 1, 1)
+    return x * y.expand_as(x)
 
 
 def pools():
     pool_dict = OrderedDict([
         ("MaxPool2d", nn.MaxPool2d(kernel_size=2, stride=2, padding=0)),
         ("AvgPool2d", nn.AvgPool2d(kernel_size=2, stride=2, padding=0)),
-        ("MaxPool2d_3x3", nn.MaxPool2d(kernel_size=3, stride=2, padding=1)),
+        # ("MaxPool2d_3x3", nn.MaxPool2d(kernel_size=3, stride=2, padding=1)),
         ("AvgPool2d_3x3", nn.AvgPool2d(kernel_size=3, stride=2, padding=1)),
         ("MaxPool2d_5x5", nn.MaxPool2d(kernel_size=5, stride=2, padding=2)),
-        ("AvgPool2d_5x5", nn.AvgPool2d(kernel_size=5, stride=2, padding=2)),
+        # ("AvgPool2d_5x5", nn.AvgPool2d(kernel_size=5, stride=2, padding=2)),
         # ("MaxPool2d_7x7", nn.MaxPool2d(kernel_size=7, stride=2, padding=3)),
         # ("AvgPool2d_7x7", nn.AvgPool2d(kernel_size=7, stride=2, padding=3)),
         # ("MaxPool2d_9x9", nn.MaxPool2d(kernel_size=9, stride=2, padding=4)),
@@ -83,11 +86,11 @@ def upsamples(C_in, C_out):
         
         ("TransConv_2x2_RelU", transposed_conv_2d(C_in, C_out, kernel_size=2, stride=2, padding=0)),
         ("TransConv_2x2_SiLU", transposed_conv_2d(C_in, C_out, kernel_size=2, stride=2, padding=0, activation=nn.SiLU())),
-        ("TransConv_2x2_Sigmoid", transposed_conv_2d(C_in, C_out, kernel_size=2, stride=2, padding=0, activation=nn.Sigmoid())),
+        # ("TransConv_2x2_Sigmoid", transposed_conv_2d(C_in, C_out, kernel_size=2, stride=2, padding=0, activation=nn.Sigmoid())),
 
-        ("TransConv_4x4_Relu", transposed_conv_2d(C_in, C_out)),
-        ("TransConv_4x4_SiLU", transposed_conv_2d(C_in, C_out, activation=nn.SiLU())),
-        ("TransConv_4x4_Sigmoid", transposed_conv_2d(C_in, C_out, activation=nn.Sigmoid())),
+        # ("TransConv_4x4_Relu", transposed_conv_2d(C_in, C_out)),
+        # ("TransConv_4x4_SiLU", transposed_conv_2d(C_in, C_out, activation=nn.SiLU())),
+        # ("TransConv_4x4_Sigmoid", transposed_conv_2d(C_in, C_out, activation=nn.Sigmoid())),
         
     ])
     return upsample_dict
@@ -173,3 +176,23 @@ def convs(C_in, C_out):
     ])
     return conv_dict
 
+        ### 
+        ### 
+        ### this works well
+        ### 
+        ### 
+
+        # ("conv2d_1x1_Relu", conv_2d(C_in, C_out, kernel_size=1, padding=0)),
+        # ("conv2d_1x1_SiLU", conv_2d(C_in, C_out, kernel_size=1, padding=0, activation=nn.SiLU())),
+        # ("conv2d_1x1_Mish", conv_2d(C_in, C_out, kernel_size=1, padding=0, activation=nn.Mish())),
+
+        # ("conv2d_3x3_Relu", conv_2d(C_in, C_out, kernel_size=3, padding=1)),
+        # ("conv2d_3x3_SiLU", conv_2d(C_in, C_out, kernel_size=3, padding=1, activation=nn.SiLU())),
+        # ("conv2d_3x3_Mish", conv_2d(C_in, C_out, kernel_size=3, padding=1, activation=nn.Mish())),
+        
+        # ("conv2d_3x3_SiLU_1dil", conv_2d(C_in, C_out, kernel_size=3, padding=2, dilation=2, activation=nn.SiLU())),
+        # ("convDS_3x3_SiLU_1dil", depthwise_separable_conv(C_in, C_out, kernel_size=3, padding=2, dilation=2, activation=nn.SiLU())),
+        
+        # ("convDS_5x5_Relu", depthwise_separable_conv(C_in, C_out, kernel_size=5, padding=2)),
+        # ("conv2d_7x7_SiLU", conv_2d(C_in, C_out, kernel_size=7, padding=3, activation=nn.SiLU())),
+        # ("conv2d_9x9_Relu", conv_2d(C_in, C_out, kernel_size=9, padding=4)),

@@ -14,25 +14,35 @@ class UNetSpaceMT(torch.nn.Module):
         self.depth = depth
 
         features = init_features
+
+        # encoder layers initialize
         self.pools = nn.ModuleList()
         self.encoders = nn.ModuleList()
+
+        # first encoder layer
         self.encoders.append(LayerChoice(convs(in_channels, features),label='enc1'))
         self.pools.append(LayerChoice(pools(),label='pool1'))
 
+        # remaining encoder layers
         for i in range(depth-1):
             self.encoders.append(LayerChoice(convs(features, features * 2),label=f"enc{i+2}"))
             self.pools.append(LayerChoice(pools(),label=f"pool{i+2}"))
             features *= 2
 
+        # bottleneck layer (bottom of unet)
         self.bottleneck = LayerChoice(convs(features, features * 2),label="bottleneck")
 
+        # decoder layers initialize
         self.upconvs = nn.ModuleList()
         self.decoders = nn.ModuleList()
+
+        # all decoder layers
         for i in range(depth):
             self.upconvs.append(LayerChoice(upsamples(features * 2, features),label=f"upconv{i+1}"))
             self.decoders.append(LayerChoice(convs(features * 2, features),label=f"dec{i+1}"))
             features //= 2        
 
+        # final conv layer
         self.conv = nn.Conv2d(in_channels=features*2, out_channels=out_channels, kernel_size=1)
 
     def forward(self, x):

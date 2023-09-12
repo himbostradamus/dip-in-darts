@@ -40,7 +40,9 @@ class SGLDES(LightningModule):
                  NAS=False,
                  OneShot=False,
                  SGLD_regularize=True,
-                 switch=None
+                 ES=True,
+                 switch=None,
+                 plotting=True
                 ):
         super().__init__()
         self.automatic_optimization = True
@@ -49,6 +51,8 @@ class SGLDES(LightningModule):
         self.OneShot = OneShot
         self.SGLD_regularize = SGLD_regularize
         self.switch = switch
+        self.ES = ES
+        self.plotting = plotting
 
         # network input
         self.input_depth = 1
@@ -149,7 +153,8 @@ class SGLDES(LightningModule):
         self.burnin_iter=0 # burn-in iteration for SGLD
 
         # bon voyage
-        self.plot_progress()
+        if self.plotting:
+            self.plot_progress()
 
     def forward(self, net_input_saved):
         if self.reg_noise_std > 0:
@@ -158,7 +163,7 @@ class SGLDES(LightningModule):
         else:
             return self.model(net_input_saved)
 
-    def update_burnin(self,out_np):
+    def update_stop(self,out_np):
         """
         Componenet of closure function
         check if we should end the burnin phase
@@ -228,14 +233,13 @@ class SGLDES(LightningModule):
         self.total_loss = self.criteria(out, self.img_noisy_torch)
         self.latest_loss = self.total_loss.item()
         out_np = out.detach().cpu().numpy()[0]
-        rescaled_out_np = out_np # (out_np - np.min(out_np)) / (np.max(out_np) - np.min(out_np))
 
         # compute PSNR
-        self.psnr_gt = compare_psnr(self.img_np, rescaled_out_np)
+        self.psnr_gt = compare_psnr(self.img_np, out_np)
 
         # early burn in termination criteria
-        if not self.burnin_over and self.SGLD_regularize:
-            self.update_burnin(out_np)
+        if not self.burnin_over and self.ES:
+            self.update_stop(out_np)
 
         # SGLD mean calculation and logging
         if self.SGLD_regularize:
@@ -287,18 +291,24 @@ class SGLDES(LightningModule):
             self.add_noise(self.model)
 
         if self.i % self.show_every == 0 and not self.HPO:
-            self.plot_progress()
+            if self.plotting:
+                self.plot_progress()
 
         if self.switch is not None:
             if self.i >= self.switch:
                 self.SGLD_regularize = True
-                
+        
+        if self.burnin_over and self.ES and not self.SGLD_regularize:
+            print(f'Early stopping after {self.i} iterations')
+            self.trainer.should_stop = True
+
     def on_train_end(self, **kwargs: Any):
         """
         Report final metrics and display the results
         """
         if not self.HPO:
-            self.plot_progress()
+            if self.plotting:
+                self.plot_progress()
             if self.sample_count != 0 and self.SGLD_regularize:
                 print(f"Final SGLD mean PSNR: {round(self.sgld_mean_psnr,5)}")
                 report_final_result(round(self.sgld_mean_psnr,5))

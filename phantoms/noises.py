@@ -61,7 +61,7 @@
 import torch
 import numpy as np
 
-def add_gaussian_noise(img, noise_factor=0.15):
+def add_gaussian_noise(img, noise_factor=25/255.):
     """
     https://en.wikipedia.org/wiki/Gaussian_noise
     """
