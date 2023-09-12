@@ -322,6 +322,7 @@ class SGLDES(LightningModule):
 
     def common_dataloader(self):
         # dataset = SingleImageDataset(self.phantom, self.num_iter)
+        # this should be net_input instead of phantom
         dataset = SingleImageDataset(self.phantom, 1)
         return DataLoader(dataset, batch_size=1)
 
