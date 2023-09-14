@@ -221,8 +221,9 @@ class SGLDES(LightningModule):
                     report_intermediate_result({
                         'iteration': self.i,
                         'loss': round(self.latest_loss,5),
-                        'psnr_gt': round(self.psnr_gt,5)
+                        'psnr_gt': round(self.psnr_gt,5),
                         })
+
         if self.i % self.report_every == 0 and self.HPO:
             report_intermediate_result(round(self.psnr_gt,5))
 
@@ -250,7 +251,8 @@ class SGLDES(LightningModule):
             report_intermediate_result({
                 'iteration': self.i,
                 'loss': round(self.latest_loss,5),
-                'psnr_gt': round(self.psnr_gt,5)
+                'psnr_gt': round(self.psnr_gt,5),
+                'var': round(self.cur_var,5) if self.ES and self.cur_var is not None else 'Pre-Burnin'
                 })
         elif self.i % self.report_every == 0 and self.HPO:
             report_intermediate_result(round(self.psnr_gt,5))
@@ -270,7 +272,6 @@ class SGLDES(LightningModule):
         """
         loss = self.closure()
         return {"loss": loss}
-
 
     def add_noise(self, net):
         """
@@ -321,9 +322,9 @@ class SGLDES(LightningModule):
             report_final_result(round(self.psnr_gt,5))
 
     def common_dataloader(self):
-        # dataset = SingleImageDataset(self.phantom, self.num_iter)
+        # dataset = SingleImageDataset(self.phantom, 1)
         # this should be net_input instead of phantom
-        dataset = SingleImageDataset(self.phantom, 1)
+        dataset = SingleImageDataset(self.img_noisy_np, 1)
         return DataLoader(dataset, batch_size=1)
 
     def train_dataloader(self):

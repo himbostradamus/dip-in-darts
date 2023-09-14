@@ -3,7 +3,8 @@ import nni.retiarii.nn.pytorch as nn
 
 from nni.retiarii import model_wrapper
 from nni.retiarii.nn.pytorch import LayerChoice
-from .components import pools, upsamples, convs
+from .utils.components import pools, upsamples, convs
+from .utils.attention import seBlock, seForward
 
 # this search space is for multi-trial search strategies
 @model_wrapper
@@ -18,6 +19,7 @@ class UNetSpaceMT(torch.nn.Module):
         # encoder layers initialize
         self.pools = nn.ModuleList()
         self.encoders = nn.ModuleList()
+        self.attentions = nn.ModuleList()
 
         # first encoder layer
         self.encoders.append(LayerChoice(convs(in_channels, features),label='enc1'))
@@ -26,11 +28,13 @@ class UNetSpaceMT(torch.nn.Module):
         # remaining encoder layers
         for i in range(depth-1):
             self.encoders.append(LayerChoice(convs(features, features * 2),label=f"enc{i+2}"))
+            self.attentions.append(seBlock(features * 2))
             self.pools.append(LayerChoice(pools(),label=f"pool{i+2}"))
             features *= 2
 
         # bottleneck layer (bottom of unet)
         self.bottleneck = LayerChoice(convs(features, features * 2),label="bottleneck")
+        self.attentions.append(seBlock(features * 2))
 
         # decoder layers initialize
         self.upconvs = nn.ModuleList()
@@ -49,10 +53,12 @@ class UNetSpaceMT(torch.nn.Module):
         skips = []
         for i in range(self.depth):
             x = self.encoders[i](x)
+            x = self.attentions[i](x)
             skips.append(x)
             x = self.pools[i](x)
             
         x = self.bottleneck(x)
+        x = self.attentions[-1](x)
 
         for i in range(self.depth):
             x = self.upconvs[i](x)

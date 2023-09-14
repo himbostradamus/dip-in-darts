@@ -1,6 +1,7 @@
 from collections import OrderedDict
 import nni.retiarii.nn.pytorch as nn
 from nni import trace
+import torch
 
 @trace
 def seBlock(channel, reduction=16):
@@ -18,3 +19,4 @@ def seForward(x, fcs):
     y = nn.AdaptiveAvgPool2d(1)(x).view(b, c)
     y = fcs(y).view(b, c, 1, 1)
     return x * y.expand_as(x)
+

@@ -5,8 +5,8 @@ import nni.retiarii.nn.pytorch as nn
 from nni import trace
 from nni.retiarii import model_wrapper
 from nni.retiarii.nn.pytorch import Cell
-from .components import seBlock, seForward, pools, upsamples, convs, transposed_conv_2d
-
+from .utils.components import pools, upsamples, convs
+from .utils.attention import *
 @trace
 @model_wrapper
 class UNetSpace(nn.Module):
@@ -28,6 +28,7 @@ class UNetSpace(nn.Module):
         denodes = 1
         self.use_attention = use_attention
         filters = 64
+        filters_start = filters
 
         self.enConvList = nn.ModuleList()
         self.decConvList = nn.ModuleList()
@@ -38,7 +39,7 @@ class UNetSpace(nn.Module):
         ### initialize Encoders
         self.enConvList.append(
             Cell(
-                op_candidates=convs(1,filters),
+                op_candidates=convs(C_in,filters),
                 num_nodes=1,
                 num_ops_per_node=1,
                 num_predecessors=1,
@@ -99,7 +100,7 @@ class UNetSpace(nn.Module):
                     ))
             filters //= 2
 
-        self.outconv = nn.Conv2d(in_channels=64, out_channels=1, kernel_size=1)
+        self.outconv = nn.Conv2d(in_channels=filters_start, out_channels=C_out, kernel_size=1)
         
     def forward(self, x):
         skips = []

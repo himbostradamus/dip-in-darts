@@ -38,14 +38,46 @@ def transposed_conv_2d(C_in, C_out, kernel_size=4, stride=2, padding=1, activati
 
 def pools():
     pool_dict = OrderedDict([
-        ("MaxPool2d_3x3", nn.MaxPool2d(kernel_size=3, stride=2, padding=1)),
+
+        ### OLD SPACE ###
+        ("MaxPool2d", nn.MaxPool2d(kernel_size=2, stride=2, padding=0)),
+        ("AvgPool2d", nn.AvgPool2d(kernel_size=2, stride=2, padding=0)),
+        
         ("AvgPool2d_3x3", nn.AvgPool2d(kernel_size=3, stride=2, padding=1)),
+        ("MaxPool2d_5x5", nn.MaxPool2d(kernel_size=5, stride=2, padding=2)),
+
+
+        ### For DARTS ###
+        # ("MaxPool2d_3x3", nn.MaxPool2d(kernel_size=3, stride=2, padding=1)),
+        # ("AvgPool2d_3x3", nn.AvgPool2d(kernel_size=3, stride=2, padding=1)),
+
+        
     ])
     return pool_dict
 
 def upsamples(C_in, C_out):
     upsample_dict = OrderedDict([
         
+        ### OLD SPACE ###
+        ("Upsample_nearest", nn.Sequential(
+            nn.Upsample(scale_factor=2, mode='nearest'),
+            nn.Conv2d(C_in, C_out, kernel_size=1)
+        )),
+        ("Upsample_bilinear", nn.Sequential(
+            nn.Upsample(scale_factor=2, mode='bilinear'),
+            nn.Conv2d(C_in, C_out, kernel_size=1)
+        )),
+        ("TransConv_2x2_RelU", transposed_conv_2d(C_in, C_out, kernel_size=2, stride=2, padding=0)),
+        ("TransConv_2x2_SiLU", transposed_conv_2d(C_in, C_out, kernel_size=2, stride=2, padding=0, activation=nn.SiLU())),
+
+        
+        ### For DARTS ###
+        # ("Upsample_bilinear", nn.Sequential(
+        #     nn.Upsample(scale_factor=2, mode='bilinear'),
+        #     nn.Conv2d(C_in, C_out, kernel_size=1)
+        # )),
+        # ("TransConv_2x2_RelU", transposed_conv_2d(C_in, C_out, kernel_size=2, stride=2, padding=0)),
+
     ])
     return upsample_dict
 
@@ -54,20 +86,58 @@ def convs(C_in, C_out):
     # padding = (kernel_size - 1) * dilation // 2
     conv_dict = OrderedDict([
 
+        ### OLD SPACE ###
+        # ("conv2d_1x1_Relu", conv_2d(C_in, C_out, kernel_size=1, padding=0)),
+        # ("conv2d_1x1_SiLU", conv_2d(C_in, C_out, kernel_size=1, padding=0, activation=nn.SiLU())),
+        # ("conv2d_1x1_Mish", conv_2d(C_in, C_out, kernel_size=1, padding=0, activation=nn.Mish())),
 
-        # sep_conv_3x3: Depthwise separable convolution 3x3.
-        # sep_conv_5x5: Depthwise separable convolution 5x5.
-        # avg_pool_3x3: Average pooling 3x3.
-        # max_pool_3x3: Max pooling 3x3.
+        # ("conv2d_3x3_Relu", conv_2d(C_in, C_out, kernel_size=3, padding=1)),
+        # ("conv2d_3x3_SiLU", conv_2d(C_in, C_out, kernel_size=3, padding=1, activation=nn.SiLU())),
+        # ("conv2d_3x3_Mish", conv_2d(C_in, C_out, kernel_size=3, padding=1, activation=nn.Mish())),
+        # ("conv2d_3x3_SiLU_1dil", conv_2d(C_in, C_out, kernel_size=3, padding=2, dilation=2, activation=nn.SiLU())),
+        # ("convDS_3x3_SiLU_1dil", depthwise_separable_conv(C_in, C_out, kernel_size=3, padding=2, dilation=2, activation=nn.SiLU())),
 
-        ("Identity", nn.Identity()),
+        # ("convDS_5x5_Relu", depthwise_separable_conv(C_in, C_out, kernel_size=5, padding=2)),
+
+        # ("conv2d_7x7_SiLU", conv_2d(C_in, C_out, kernel_size=7, padding=3, activation=nn.SiLU())),
+
+        # ("conv2d_9x9_Relu", conv_2d(C_in, C_out, kernel_size=9, padding=4)),
+
+        ### For DARTS ###
+        # ("Identity", nn.Identity()),
+        ("conv2d_1x1_Mish", conv_2d(C_in, C_out, kernel_size=1, padding=0, activation=nn.Mish())), ### not conventionally in DARTS but we want to try it
+        ("conv2d_9x9_ReLU", conv_2d(C_in, C_out, kernel_size=9, padding=4)), ### not conventionally in DARTS but we want to try it
+
+        ("conv2d_3x3_Mish", conv_2d(C_in, C_out, kernel_size=3, padding=1, activation=nn.Mish())), ### not conventionally in DARTS but we want to try it
+        ("conv2d_7x7_SiLU", conv_2d(C_in, C_out, kernel_size=7, padding=3, activation=nn.SiLU())), ### not conventionally in DARTS but we want to try it
+        ("conv2d_3x3_Mish_3dil", conv_2d(C_in, C_out, kernel_size=3, padding=3, dilation=3, activation=nn.Mish())), ### not conventionally in DARTS but we want to try it
+        
+        # ("convDS_1x1_GELU", depthwise_separable_conv(C_in, C_out, kernel_size=1, padding=0, activation=nn.GELU())), ### not conventionally in DARTS but we want to try it
+        
         ("convDS_3x3_Relu", depthwise_separable_conv(C_in, C_out, kernel_size=3, padding=1)),
         ("convDS_5x5_Relu", depthwise_separable_conv(C_in, C_out, kernel_size=5, padding=2)),
-        ("conv2d_3x3_Relu_1dil", conv_2d(C_in, C_out, kernel_size=3, padding=2, dilation=2)),
-        ("conv2d_5x5_Relu_1dil", conv_2d(C_in, C_out, kernel_size=5, padding=4, dilation=2)),
+        ("conv2d_3x3_Relu_2dil", conv_2d(C_in, C_out, kernel_size=3, padding=2, dilation=2)),
+        ("conv2d_5x5_Relu_2dil", conv_2d(C_in, C_out, kernel_size=5, padding=4, dilation=2)),
 
     ])
     return conv_dict
+
+#  'decoder 1/op_1_0': 'conv2d_1x1_Mish',
+
+#  'encoder 3/op_1_0': 'convDS_3x3_Relu',
+
+#  'encoder 4/op_1_0': 'conv2d_3x3_Relu_1dil',
+
+#  'decoder 4/op_1_0': 'convDS_5x5_Relu',
+
+#  'encoder 2/op_1_0': 'conv2d_7x7_SiLU',
+
+#  'decoder 2/op_1_0': 'conv2d_9x9_ReLU',
+
+
+
+
+
 
         ### 
         ### 
