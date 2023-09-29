@@ -4,9 +4,9 @@ import nni.retiarii.nn.pytorch as nn
 from .utils.attention import seBlock, seForward
 
 # this is the original UNet
-class UNet(torch.nn.Module):
+class UNetAttention(torch.nn.Module):
     def __init__(self, in_channels=1, out_channels=1, init_features=32, depth=4, use_attention=True):
-        super(UNet, self).__init__()
+        super(UNetAttention, self).__init__()
 
         self.depth = depth
         self.use_attention = use_attention
@@ -16,23 +16,23 @@ class UNet(torch.nn.Module):
         self.encoders = nn.ModuleList()
         self.enAttentions = nn.ModuleList()
 
-        self.encoders.append(UNet._block(in_channels, features, name="enc1"))
+        self.encoders.append(UNetAttention._block(in_channels, features, name="enc1"))
         self.pools.append(nn.MaxPool2d(kernel_size=2, stride=2))
 
         for i in range(depth-1):
-            self.encoders.append(UNet._block(features, features * 2, name=f"enc{i+2}"))
+            self.encoders.append(UNetAttention._block(features, features * 2, name=f"enc{i+2}"))
             self.enAttentions.append(seBlock(features*2,16))
             self.pools.append(nn.MaxPool2d(kernel_size=2, stride=2))
             features *= 2
 
-        self.bottleneck = UNet._block(features, features * 2, name="bottleneck")
+        self.bottleneck = UNetAttention._block(features, features * 2, name="bottleneck")
         self.enAttentions.append(seBlock(features*2,16))
 
         self.upconvs = nn.ModuleList()
         self.decoders = nn.ModuleList()
         for i in range(depth):
             self.upconvs.append(nn.ConvTranspose2d(features * 2, features, kernel_size=2, stride=2))
-            self.decoders.append(UNet._block(features * 2, features, name=f"dec{i+1}"))
+            self.decoders.append(UNetAttention._block(features * 2, features, name=f"dec{i+1}"))
             features //= 2
         
         self.conv = nn.Conv2d(in_channels=features*2, out_channels=out_channels, kernel_size=1)

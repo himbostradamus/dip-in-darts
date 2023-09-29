@@ -157,7 +157,7 @@ class Eval_SGLD(LightningModule):
                     'psnr_gt': round(self.psnr_gt,5)
                     })
 
-        self.i += 1 # this may cause a problem with two iterations per batch
+        self.i += 1
 
         return self.total_loss
 

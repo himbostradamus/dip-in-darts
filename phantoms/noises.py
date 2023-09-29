@@ -206,7 +206,7 @@ def add_selected_noise(img, noise_type='gaussian', **kwargs):
 #     return img_copy
 
 ### Poisson rejected ###
-### too hard to control noise level ###
+### too tedious to control noise level ###
 # def add_poisson_noise(img):
 #     img_copy = img.clone()
 #     noisy_img = torch.poisson(img_copy * 255) / 255

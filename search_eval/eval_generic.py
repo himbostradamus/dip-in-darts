@@ -62,9 +62,9 @@ class SGLDES(LightningModule):
         
         if not NAS:
             if model_cls is None:
-                model = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet', in_channels=1, out_channels=1, init_features=64, pretrained=False)
-            self.model_cls = model
-            self.model = model
+                self.model = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet', in_channels=1, out_channels=1, init_features=64, pretrained=False)
+            self.model_cls = model_cls
+            self.model = model_cls
 
         # loss
         self.criteria = torch.nn.MSELoss().type(dtype)
